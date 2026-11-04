@@ -13,7 +13,7 @@ case "$1" in
 	start)
 		printf "Starting endpoint: "
 		/usr/sbin/nft list table ip pge >/dev/null 2>&1 || { echo "FAIL (no firewall)"; exit 1; }
-		[ "$(cat /proc/sys/kernel/modules_disabled)" = 1 ] || { echo "FAIL (module loading is on)"; exit 1; }
+		[ ! -e /proc/modules ] || { echo "FAIL (the kernel can load modules)"; exit 1; }
 		# Busybox sysctl exits 0 even when a key fails, so read every pge setting back.
 		for f in /etc/sysctl.d/*-pge.conf; do
 			while read -r key eq value || [ -n "$key" ]; do

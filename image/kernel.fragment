@@ -1,44 +1,36 @@
-# Built in, not modules: nothing on the image loads modules, and the firewall must exist before the network.
+# Applied on top of kernel.config. These are the settings the device's security rests on; build.sh
+# fails if any of them doesn't hold in the built kernel.
+# The firewall must exist before the network.
 CONFIG_NF_CONNTRACK=y
 CONFIG_NF_TABLES=y
 CONFIG_NF_TABLES_IPV4=y
 CONFIG_NFT_CT=y
-# Hardening: the kernel locked down against reading or changing itself, no raw memory, debugger or
-# tracing interfaces, and nothing the device doesn't use (IPv6, radios, sound, USB). Modules stay
-# configurable (turning them off builds every driver in) but none ship and loading is switched off at
-# boot (overlay /etc/sysctl.d/90-pge.conf).
+# No module support at all: no kernel code can be added after boot, and no module signing keys or
+# certificate parsers are built.
+# CONFIG_MODULES is not set
+# The kernel locked down against reading or changing itself, and no raw memory, debugger, tracing,
+# BPF or user namespaces.
 CONFIG_SECURITY_LOCKDOWN_LSM=y
 CONFIG_SECURITY_LOCKDOWN_LSM_EARLY=y
 CONFIG_LOCK_DOWN_KERNEL_FORCE_CONFIDENTIALITY=y
 CONFIG_SECURITY_YAMA=y
 CONFIG_SECURITY_LANDLOCK=y
 CONFIG_LSM="lockdown,yama,landlock"
-# Lockdown turns on module signing. No signing key at all: the build then embeds no certificate (a
-# generated one would differ in every build, so two builds couldn't be compared) and no module can
-# ever be verified, so lockdown refuses every module even if loading were switched back on.
-CONFIG_MODULE_SIG_KEY=""
-# CONFIG_MODULE_SIG_ALL is not set
 # CONFIG_DEVMEM is not set
 # CONFIG_DEBUG_FS is not set
-# CONFIG_KPROBES is not set
 # CONFIG_KGDB is not set
 # CONFIG_FTRACE is not set
 # CONFIG_BPF_SYSCALL is not set
-# CONFIG_USER_NS is not set
+# CONFIG_NAMESPACES is not set
 # CONFIG_MAGIC_SYSRQ is not set
+# Nothing the device doesn't use: IPv6, radios, sound, USB, performance counters, 32-bit programs,
+# raw packet sockets (the address is static), io_uring, a hypervisor. The tty can't push input or
+# load a line discipline.
 # CONFIG_IPV6 is not set
-# CONFIG_WLAN is not set
+# CONFIG_WIRELESS is not set
 # CONFIG_BT is not set
-# CONFIG_CFG80211 is not set
 # CONFIG_SOUND is not set
 # CONFIG_USB_SUPPORT is not set
-CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
-CONFIG_HARDENED_USERCOPY=y
-CONFIG_SLAB_FREELIST_RANDOM=y
-CONFIG_SHUFFLE_PAGE_ALLOCATOR=y
-# More trimming (3 Nov evening): no performance counters, no 32-bit programs, no raw packet sockets (the
-# address is static, so no DHCP client needs them), no io_uring, no hypervisor; the tty can't push
-# input or load a line discipline. Freed memory is wiped and the allocator's lists are checked.
 # CONFIG_PERF_EVENTS is not set
 # CONFIG_COMPAT is not set
 # CONFIG_PACKET is not set
@@ -47,14 +39,25 @@ CONFIG_SHUFFLE_PAGE_ALLOCATOR=y
 # CONFIG_CHECKPOINT_RESTORE is not set
 # CONFIG_LEGACY_TIOCSTI is not set
 # CONFIG_LDISC_AUTOLOAD is not set
+# Memory: freed and new memory wiped, allocator lists randomised and checked.
+CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
 CONFIG_INIT_ON_FREE_DEFAULT_ON=y
+CONFIG_HARDENED_USERCOPY=y
+CONFIG_SLAB_FREELIST_RANDOM=y
 CONFIG_SLAB_FREELIST_HARDENED=y
+CONFIG_SHUFFLE_PAGE_ALLOCATOR=y
 CONFIG_LIST_HARDENED=y
 CONFIG_BUG_ON_DATA_CORRUPTION=y
 CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT=y
 CONFIG_SCHED_STACK_END_CHECK=y
+# Speculative execution: the kernel's own defences stay built in (they still need mitigations=auto
+# on the command line, see post-image.sh).
+CONFIG_UNMAP_KERNEL_AT_EL0=y
+CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY=y
 # The root file system is checked block by block against a hash tree (dm-verity), set up by the
 # kernel itself from the command line, so no initramfs is needed.
 CONFIG_BLK_DEV_DM=y
 CONFIG_DM_INIT=y
 CONFIG_DM_VERITY=y
+# No fallback command line: without the firmware's, the kernel would mount the root unchecked.
+CONFIG_CMDLINE=""

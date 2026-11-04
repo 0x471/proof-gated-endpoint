@@ -48,6 +48,8 @@ make -C "$BR" O="$WORK/out" raspberrypi4_64_defconfig
   echo "BR2_ROOTFS_OVERLAY=\"$HERE/overlay $STAGE\""
   echo "BR2_ROOTFS_USERS_TABLES=\"$HERE/users.txt\""
   echo "BR2_ROOTFS_POST_IMAGE_SCRIPT=\"board/raspberrypi4-64/post-image.sh $HERE/post-image.sh\""
+  echo "BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y"
+  echo "BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE=\"$HERE/kernel.config\""
   echo "BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES=\"$HERE/kernel.fragment\""
   echo "BR2_ROOTFS_POST_BUILD_SCRIPT=\"board/raspberrypi4-64/post-build.sh $HERE/post-build.sh\""
   echo "BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE=\"$HERE/config.txt\""
@@ -71,7 +73,6 @@ grep -q '^root:\*:' "$WORK/out/target/etc/shadow" || { echo "root login is not l
 for f in usr/bin/kmod bin/kmod usr/bin/xz; do
   [ ! -e "$WORK/out/target/$f" ] || { echo "$f is still on the image" >&2; exit 1; }
 done
-grep -qx 'kernel.modules_disabled = 1' "$WORK/out/target/etc/sysctl.d/90-pge.conf" || { echo "module loading is not switched off" >&2; exit 1; }
 ! grep -q '^kernel\.io_uring' "$WORK/out/target/etc/sysctl.d/91-pge.conf" || { echo "io_uring's switch is set but io_uring isn't built" >&2; exit 1; }
 # The log lives on /tmp (RAM); a size cap keeps a flood of records from using up memory (K51).
 grep -q '^tmpfs[[:space:]]*/tmp[[:space:]]*tmpfs[[:space:]]*[^[:space:]]*size=64m' "$WORK/out/target/etc/fstab" || { echo "/tmp has no size cap" >&2; exit 1; }
