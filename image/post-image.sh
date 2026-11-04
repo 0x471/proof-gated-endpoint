@@ -19,19 +19,22 @@ hash="$("$HOST_DIR/sbin/veritysetup" format --no-superblock --hash sha256 --salt
   | sed -n 's/^Root hash:[[:space:]]*//p')"
 [ "${#hash}" -eq 64 ] || { echo "veritysetup gave no root hash" >&2; exit 1; }
 # The kernel builds the checked device itself (CONFIG_DM_INIT) once both partitions exist, and mounts
-# it read-only as the root. mitigations=auto: this kernel (6.6.28) defines the switch for x86 only, so
+# it read-only as the root. It waits for them by partition id: a /dev name resolves as soon as the
+# card does, before its partitions are read, and the table then fails to load. mitigations=auto: this kernel (6.6.28) defines the switch for x86 only, so
 # on arm64 it starts with every speculative-execution mitigation off unless told otherwise.
 # PGE_CMDLINE_EXTRA adds options for one experiment's image.
-printf 'root=/dev/dm-0 dm-mod.waitfor=/dev/mmcblk0p2,/dev/mmcblk0p4 dm-mod.create="root,,,ro,0 %d verity 1 /dev/mmcblk0p2 /dev/mmcblk0p4 4096 4096 %d 0 sha256 %s %s" mitigations=auto rootwait console=tty1 console=ttyAMA0,115200%s\n' \
+printf 'root=/dev/dm-0 dm-mod.waitfor=PARTUUID=70676506-02,PARTUUID=70676506-04 dm-mod.create="root,,,ro,0 %d verity 1 PARTUUID=70676506-02 PARTUUID=70676506-04 4096 4096 %d 0 sha256 %s %s" mitigations=auto rootwait console=tty1 console=ttyAMA0,115200%s\n' \
   $((size / 512)) $((size / 4096)) "$hash" "$SALT" "${PGE_CMDLINE_EXTRA:+ $PGE_CMDLINE_EXTRA}" \
   > "$BINARIES_DIR/rpi-firmware/cmdline.txt"
 
 # The board script's boot partition, rebuilt with this command line and a fixed volume id (mkdosfs
-# picks a random one), then all four partitions.
+# picks a random one), then all four partitions under a fixed disk signature, which the partition
+# ids above are made from.
 { sed '/^image sdcard.img/,$d; s/^\([[:space:]]*\)vfat {$/&\n\1\textraargs = "-i 70676505"/' "$BINARIES_DIR/genimage.cfg"
   cat <<'CFG'
 image sdcard.img {
 	hdimage {
+		disk-signature = 0x70676506
 	}
 	partition boot {
 		partition-type = 0xC
