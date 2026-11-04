@@ -61,3 +61,6 @@ CONFIG_DM_INIT=y
 CONFIG_DM_VERITY=y
 # No fallback command line: without the firmware's, the kernel would mount the root unchecked.
 CONFIG_CMDLINE=""
+# The CPU runs at one fixed speed, the lowest. A speed that follows load is itself a timing channel,
+# and at full speed a warm Pi throttles, which follows load too. Proof checks run slower for it.
+CONFIG_CPU_FREQ_DEFAULT_GOV_POWERSAVE=y
