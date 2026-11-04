@@ -51,6 +51,7 @@ make -C "$BR" O="$WORK/out" raspberrypi4_64_defconfig
   echo "BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y"
   echo "BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE=\"$HERE/kernel.config\""
   echo "BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES=\"$HERE/kernel.fragment\""
+  echo "BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES=\"$HERE/busybox.fragment\""
   echo "BR2_ROOTFS_POST_BUILD_SCRIPT=\"board/raspberrypi4-64/post-build.sh $HERE/post-build.sh\""
   echo "BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE=\"$HERE/config.txt\""
   echo "BR2_PACKAGE_HOST_CRYPTSETUP=y"
@@ -70,8 +71,12 @@ done
 grep -q '^[^#].*/sbin/getty' "$WORK/out/target/etc/inittab" && { echo "a login prompt is still in inittab" >&2; exit 1; }
 grep -q '^root:\*:' "$WORK/out/target/etc/shadow" || { echo "root login is not locked" >&2; exit 1; }
 [ ! -e "$WORK/out/target/lib/modules" ] || { echo "kernel modules are still on the image" >&2; exit 1; }
-for f in usr/bin/kmod bin/kmod usr/bin/xz; do
-  [ ! -e "$WORK/out/target/$f" ] || { echo "$f is still on the image" >&2; exit 1; }
+grep -E '^CONFIG_|^# CONFIG_.* is not set$' "$HERE/busybox.fragment" | while read -r line; do
+  grep -qxF "$line" "$WORK"/out/build/busybox-*/.config || { echo "busybox lacks $line" >&2; exit 1; }
+done
+for f in usr/bin/kmod bin/kmod sbin/insmod sbin/lsmod sbin/modprobe sbin/rmmod usr/bin/xz usr/bin/unxz usr/bin/xzcat \
+  usr/bin/lzma usr/bin/unlzma usr/bin/lzcat; do
+  [ ! -e "$WORK/out/target/$f" ] && [ ! -L "$WORK/out/target/$f" ] || { echo "$f is still on the image" >&2; exit 1; }
 done
 ! grep -q '^kernel\.io_uring' "$WORK/out/target/etc/sysctl.d/91-pge.conf" || { echo "io_uring's switch is set but io_uring isn't built" >&2; exit 1; }
 # The log lives on /tmp (RAM); a size cap keeps a flood of records from using up memory (K51).

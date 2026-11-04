@@ -1,0 +1,12 @@
+# Without the kmod and xz packages BusyBox installs its own module and xz/lzma applets in their place.
+# The kernel has no module support and nothing on the image unpacks archives.
+# CONFIG_INSMOD is not set
+# CONFIG_LSMOD is not set
+# CONFIG_MODPROBE is not set
+# CONFIG_RMMOD is not set
+# CONFIG_UNLZMA is not set
+# CONFIG_LZCAT is not set
+# CONFIG_LZMA is not set
+# CONFIG_UNXZ is not set
+# CONFIG_XZCAT is not set
+# CONFIG_XZ is not set
