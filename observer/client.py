@@ -12,6 +12,8 @@ order answers arrived across all connections. With --period-ms P, one connection
 start + i * P whatever has come back (open loop); rows are in arrival order, elapsed_ms per request.
 Requests and answers use the endpoint's binary format (pge/protocol.py); the observer needs no
 bundle, so it sizes requests from x and answers from their frame length (y comes back flat).
+With --tokens, X_JSON is a list of prompt token ids and the token format of the FlashProve backend
+is used (pge/tokens.py); y is then the reply's token ids.
 """
 from __future__ import annotations
 
@@ -26,21 +28,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pge.protocol import Wire, frame  # noqa: E402
+from pge.tokens import TokenWire  # noqa: E402
 
 
-async def trace(host: str, port: int, xs: list, on_row=None) -> list[dict]:
+def _request(cid: int, x, tokens: bool = False) -> bytes:
+    if tokens:
+        return frame(TokenWire(len(x), 1, 1).encode_request(cid, x))
+    return frame(Wire(tuple(len(t) for t in x), ()).encode_request(cid, x))
+
+
+async def trace(host: str, port: int, xs: list, on_row=None, tokens: bool = False) -> list[dict]:
     reader, writer = await asyncio.open_connection(host, port)
     rows = []
     try:
         for cid, x in enumerate(xs):
-            body = Wire(tuple(len(t) for t in x), ()).encode_request(cid, x)
+            body = _request(cid, x, tokens)
             start = time.monotonic()
-            writer.write(frame(body))
+            writer.write(body)
             await writer.drain()
-            n = struct.unpack(">I", await reader.readexactly(4))[0]
-            if n < 10 or (n - 10) % 8:
-                raise ValueError(f"reply of {n} bytes is not an endpoint reply")
-            answer = Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
+            answer = await _read_reply(reader, tokens)
             rows.append({"id": cid, "elapsed_ms": round((time.monotonic() - start) * 1000, 3), "answer": answer})
             if on_row:
                 on_row(rows[-1])
@@ -49,7 +55,7 @@ async def trace(host: str, port: int, xs: list, on_row=None) -> list[dict]:
     return rows
 
 
-async def trace_batches(host: str, port: int, xs: list, batch: int, on_row=None) -> list[dict]:
+async def trace_batches(host: str, port: int, xs: list, batch: int, on_row=None, tokens: bool = False) -> list[dict]:
     """Send len(xs) requests in groups of batch, each group at once; rows are in arrival order."""
     reader, writer = await asyncio.open_connection(host, port)
     rows = []
@@ -57,13 +63,10 @@ async def trace_batches(host: str, port: int, xs: list, batch: int, on_row=None)
         for base in range(0, len(xs), batch):
             start = time.monotonic()
             for cid in range(base, min(base + batch, len(xs))):
-                writer.write(frame(Wire(tuple(len(t) for t in xs[cid]), ()).encode_request(cid, xs[cid])))
+                writer.write(_request(cid, xs[cid], tokens))
             await writer.drain()
             for _ in range(base, min(base + batch, len(xs))):
-                n = struct.unpack(">I", await reader.readexactly(4))[0]
-                if n < 10 or (n - 10) % 8:
-                    raise ValueError(f"reply of {n} bytes is not an endpoint reply")
-                answer = Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
+                answer = await _read_reply(reader, tokens)
                 rows.append({"id": answer["id"], "elapsed_ms": round((time.monotonic() - start) * 1000, 3),
                              "answer": answer})
                 if on_row:
@@ -73,7 +76,8 @@ async def trace_batches(host: str, port: int, xs: list, batch: int, on_row=None)
     return rows
 
 
-async def trace_paced(host: str, port: int, xs: list, period_ms: float, on_row=None) -> list[dict]:
+async def trace_paced(host: str, port: int, xs: list, period_ms: float, on_row=None,
+                      tokens: bool = False) -> list[dict]:
     """Send request i at start + i * period_ms on one connection without waiting for answers."""
     reader, writer = await asyncio.open_connection(host, port)
     sent: dict[int, float] = {}
@@ -84,13 +88,13 @@ async def trace_paced(host: str, port: int, xs: list, period_ms: float, on_row=N
         for cid, x in enumerate(xs):
             await asyncio.sleep(max(0.0, start + cid * period_ms / 1000 - time.monotonic()))
             sent[cid] = time.monotonic()
-            writer.write(frame(Wire(tuple(len(t) for t in x), ()).encode_request(cid, x)))
+            writer.write(_request(cid, x, tokens))
             await writer.drain()
 
     sender = asyncio.create_task(send())
     try:
         for _ in xs:
-            answer = await _read_reply(reader)
+            answer = await _read_reply(reader, tokens)
             if answer["id"] not in sent:
                 raise ValueError(f"answer for id {answer['id']}, which wasn't sent")
             rows.append({"id": answer["id"], "elapsed_ms": round((time.monotonic() - sent[answer["id"]]) * 1000, 3),
@@ -104,15 +108,19 @@ async def trace_paced(host: str, port: int, xs: list, period_ms: float, on_row=N
     return rows
 
 
-async def _read_reply(reader: asyncio.StreamReader) -> dict:
+async def _read_reply(reader: asyncio.StreamReader, tokens: bool = False) -> dict:
     n = struct.unpack(">I", await reader.readexactly(4))[0]
+    if tokens:
+        if n < 14 or (n - 10) % 4:
+            raise ValueError(f"reply of {n} bytes is not a token reply")
+        return TokenWire(1, (n - 10) // 4, 1).parse_reply(await reader.readexactly(n))
     if n < 10 or (n - 10) % 8:
         raise ValueError(f"reply of {n} bytes is not an endpoint reply")
     return Wire((), ((n - 10) // 8,)).parse_reply(await reader.readexactly(n))
 
 
 async def trace_clients(host: str, port: int, x: list, clients: int, rounds: int, gap_ms: float = 2.0,
-                        on_row=None) -> list[dict]:
+                        on_row=None, tokens: bool = False) -> list[dict]:
     """Several connections, one request each per round; rows in arrival order across connections.
 
     Every connection has a reader waiting before anything is sent, so each answer is timed and
@@ -122,7 +130,7 @@ async def trace_clients(host: str, port: int, x: list, clients: int, rounds: int
     so the batch decoders read the order across connections.
     """
     conns = [await asyncio.open_connection(host, port) for _ in range(clients)]
-    body = lambda rid: frame(Wire(tuple(len(t) for t in x), ()).encode_request(rid, x))
+    body = lambda rid: _request(rid, x, tokens)
     rows = []
     sent = [[0.0] * rounds for _ in range(clients)]
     arrived = [0] * rounds
@@ -131,7 +139,7 @@ async def trace_clients(host: str, port: int, x: list, clients: int, rounds: int
 
     async def read(c):
         for r in range(rounds):
-            answer = await _read_reply(conns[c][0])
+            answer = await _read_reply(conns[c][0], tokens)
             t = time.monotonic()
             if answer["id"] != r:
                 raise ValueError(f"client {c} round {r}: answer for id {answer['id']}")
@@ -227,17 +235,18 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--clients", type=int, default=1, help="connections, one request each per round (--n rounds)")
     ap.add_argument("--gap-ms", type=float, default=2.0)
     ap.add_argument("--period-ms", type=float, default=0.0, help="open loop: one request every P ms on one connection")
+    ap.add_argument("--tokens", action="store_true", help="X_JSON is prompt token ids (FlashProve backend)")
     a = ap.parse_args(argv)
     xs = [json.loads(a.x)] * a.n
     emit = lambda row: print(json.dumps(row), flush=True)
     if a.period_ms > 0:
-        asyncio.run(trace_paced(a.host, a.port, xs, a.period_ms, emit))
+        asyncio.run(trace_paced(a.host, a.port, xs, a.period_ms, emit, a.tokens))
     elif a.clients > 1:
-        asyncio.run(trace_clients(a.host, a.port, json.loads(a.x), a.clients, a.n, a.gap_ms, emit))
+        asyncio.run(trace_clients(a.host, a.port, json.loads(a.x), a.clients, a.n, a.gap_ms, emit, a.tokens))
     elif a.batch > 1:
-        asyncio.run(trace_batches(a.host, a.port, xs, a.batch, emit))
+        asyncio.run(trace_batches(a.host, a.port, xs, a.batch, emit, a.tokens))
     else:
-        asyncio.run(trace(a.host, a.port, xs, emit))
+        asyncio.run(trace(a.host, a.port, xs, emit, a.tokens))
 
 
 if __name__ == "__main__":
