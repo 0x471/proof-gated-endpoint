@@ -56,14 +56,20 @@ fn read_chunk(pipe: &mut impl Read, out: &mut Vec<u8>, eof: &mut bool) -> io::Re
     Ok(())
 }
 
-pub fn run(mut cmd: Command, timeout: Duration, input: &[u8]) -> Verdict {
-    if timeout.is_zero() {
-        return Verdict::Error;
+pub fn run(cmd: Command, timeout: Duration, input: &[u8]) -> Verdict {
+    match collect(cmd, timeout, input) {
+        Some((code, out, err)) => classify(code, &out, &err),
+        None => Verdict::Error,
     }
-    let end = match Instant::now().checked_add(timeout) {
-        Some(v) => v,
-        None => return Verdict::Error,
-    };
+}
+
+/// Runs the checker to completion within `timeout`: its exit code, standard output and standard
+/// error, or None if it could not start, overran, flooded its output or did not take all of `input`.
+pub fn collect(mut cmd: Command, timeout: Duration, input: &[u8]) -> Option<(Option<i32>, Vec<u8>, Vec<u8>)> {
+    if timeout.is_zero() {
+        return None;
+    }
+    let end = Instant::now().checked_add(timeout)?;
     cmd.env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("LC_ALL", "C")
@@ -72,13 +78,10 @@ pub fn run(mut cmd: Command, timeout: Duration, input: &[u8]) -> Verdict {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(_) => return Verdict::Error,
-    };
+    let mut child = cmd.spawn().ok()?;
     let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         kill_group(&mut child);
-        return Verdict::Error;
+        return None;
     };
     let mut stdin = child.stdin.take();
     if nonblocking(stdout.as_raw_fd()).is_err()
@@ -88,7 +91,7 @@ pub fn run(mut cmd: Command, timeout: Duration, input: &[u8]) -> Verdict {
             .is_none_or(|p| nonblocking(p.as_raw_fd()).is_err())
     {
         kill_group(&mut child);
-        return Verdict::Error;
+        return None;
     }
     let mut offset = 0;
     let (mut out, mut err, mut oe, mut ee) = (Vec::new(), Vec::new(), false, false);
@@ -100,7 +103,7 @@ pub fn run(mut cmd: Command, timeout: Duration, input: &[u8]) -> Verdict {
             match pipe.write(&input[offset..]) {
                 Ok(0) => {
                     kill_group(&mut child);
-                    return Verdict::Error;
+                    return None;
                 }
                 Ok(n) => offset += n,
                 Err(e)
@@ -113,7 +116,7 @@ pub fn run(mut cmd: Command, timeout: Duration, input: &[u8]) -> Verdict {
                 }
                 Err(_) => {
                     kill_group(&mut child);
-                    return Verdict::Error;
+                    return None;
                 }
             }
         }
@@ -123,21 +126,18 @@ pub fn run(mut cmd: Command, timeout: Duration, input: &[u8]) -> Verdict {
             || out.len().saturating_add(err.len()) > OUTPUT_CAP
         {
             kill_group(&mut child);
-            return Verdict::Error;
+            return None;
         }
         if oe && ee {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    return if offset == input.len() && Instant::now() < end {
-                        classify(status.code(), &out, &err)
-                    } else {
-                        Verdict::Error
-                    }
+                    return (offset == input.len() && Instant::now() < end)
+                        .then(|| (status.code(), out, err));
                 }
                 Ok(None) => (),
                 Err(_) => {
                     kill_group(&mut child);
-                    return Verdict::Error;
+                    return None;
                 }
             }
         }
