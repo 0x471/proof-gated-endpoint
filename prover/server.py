@@ -25,6 +25,12 @@ misbehave, for the service tests and as the start of the W4 malicious-prover har
                    for a 0, so its check overlaps that release or falls between releases; one
                    check per period either way. The answer to request 0 is sent at once. Each distinct
                    question is proved once and its proof reused (proving would stall the send timing)
+  tamper_last      change the last output value (FlashProve: the token after the request, y)
+  flip_proof       flip one bit in the middle of the proof
+
+With --flashprove DIR --pins FILE the server answers in the token format instead
+(docs/FLASHPROVE_BINDING.md): every request gets the reply and proof stored in DIR
+(FlashProve's examples/accepted-proof), so only the stored prompt can pass the endpoint.
 
 Usage: python prover/server.py --listen 127.0.0.1:8701 [--mode honest]
 """
@@ -36,6 +42,7 @@ import hashlib
 import inspect
 import json
 import math
+import struct
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -46,12 +53,13 @@ sys.path.insert(0, str(ROOT))
 
 from pge.binding import CircuitSpec, split_instances  # noqa: E402
 from pge.protocol import ProtocolError, Wire, frame, read_frame  # noqa: E402
+from pge.tokens import TokenWire, read_pins  # noqa: E402
 
 TINY = ROOT / "tests" / "fixtures" / "tiny"
 TINY_SETTINGS_SHA256 = "b4a95fc7c572816034708c4e5c079f0f91f82eb9681cfa069565aacc9887aefd"
 TINY_VK_SHA256 = "34ab48a8ac0946be4faf10d85699ac729adb20ec4c6251da1d1d0d4ea18a4d26"
 MODES = ("honest", "drop", "delay", "tamper_output", "replay", "duplicate", "wrong_seq", "oversize", "garbage",
-         "timing_bits", "order_bits", "fail_position", "load_bits", "flood")
+         "timing_bits", "order_bits", "fail_position", "load_bits", "flood", "tamper_last", "flip_proof")
 
 
 def bits_per_batch(k: int) -> int:
@@ -104,6 +112,34 @@ class Prover:
         return outputs, bytes(proof["proof"])
 
 
+class Replay:
+    """FlashProve's stored proof as the server's answer to every request. The reply is the request
+    file's checked tokens r + 1 to min(e, T - 1), then y if e = T."""
+
+    def __init__(self, fixture: Path, pins: Path):
+        p = read_pins(Path(pins).read_text())
+        self.wire = TokenWire.from_pins(p)
+        self.vocab = int(p["vocab"])
+        req = (Path(fixture) / "example.req").read_bytes()
+        if len(req) % 4 or len(req) < 12:
+            raise ValueError("example.req is not a request file")
+        words = struct.unpack(f"<{len(req) // 4}I", req)
+        t, (r, e) = len(words) - 2, words[-2:]
+        y = struct.unpack("<I", (Path(fixture) / "example.y").read_bytes())[0]
+        self.prompt = list(words[:r + 1])
+        self.reply = list(words[r + 1:min(e, t - 1) + 1]) + ([y] if e == t else [])
+        if (len(self.prompt), len(self.reply)) != (self.wire.prompt, self.wire.reply):
+            raise ValueError("the stored request doesn't match the pins' prompt and reply lengths")
+        self.proof = (Path(fixture) / "example.proof").read_bytes()
+
+    def prove(self, x):
+        return list(self.reply), self.proof
+
+    def tamper(self, ids, last=False):
+        i = len(ids) - 1 if last else 0
+        return ids[:i] + [(ids[i] + 1) % self.vocab] + ids[i + 1:]
+
+
 class Server:
     def __init__(self, prover, mode: str = "honest", delay: float = 0.0, bits: str = "", slot: float = 0.2,
                  batch: int = 2, period: float = 1.0, deadline: float = 4.0, lead: float = 0.05,
@@ -126,7 +162,7 @@ class Server:
         self.sent_at: dict[int, float] = {}
         self.held: list[tuple[int, list, bytes]] = []
         self.used = 0
-        self.wire = Wire.for_spec(prover.spec)
+        self.wire = prover.wire if isinstance(prover, Replay) else Wire.for_spec(prover.spec)
         self.previous: tuple[list, bytes] | None = None
         self.sent = 0
         self.requests: list[dict] = []
@@ -211,9 +247,18 @@ class Server:
             chunk = self.bits[block * k:(block + 1) * k].ljust(k, "0")
             if pos == int(chunk, 2):
                 m = "tamper_output"
-        if m == "tamper_output":
+        if m in ("tamper_output", "tamper_last") and isinstance(self.prover, Replay):
+            outputs = self.prover.tamper(outputs, last=m == "tamper_last")
+        elif m == "tamper_output":
             first = outputs[0][0]
             outputs = [[("1" if first[0] == "0" else "0") + first[1:]] + outputs[0][1:]] + outputs[1:]
+        elif m == "tamper_last":
+            last = outputs[-1][-1]
+            outputs = outputs[:-1] + [outputs[-1][:-1] + [("1" if last[0] == "0" else "0") + last[1:]]]
+        if m == "flip_proof":
+            proof = bytearray(proof)
+            proof[len(proof) // 2] ^= 1
+            proof = bytes(proof)
         if m == "replay" and self.previous is not None:
             outputs, proof = self.previous
         if m == "wrong_seq":
@@ -247,8 +292,13 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--deadline", type=float, default=4.0, help="load_bits: the endpoint's fixed release time")
     ap.add_argument("--lead", type=float, default=0.05)
     ap.add_argument("--shift", type=float, default=0.5)
+    ap.add_argument("--flashprove", help="FlashProve stored-proof directory: answer in the token format")
+    ap.add_argument("--pins", help="with --flashprove: the endpoint's FlashProve pins file")
     a = ap.parse_args(argv)
-    server = Server(Prover(a.srs), a.mode, a.delay, a.bits, a.slot, a.batch, a.period, a.deadline, a.lead, a.shift)
+    if bool(a.flashprove) != bool(a.pins):
+        ap.error("--flashprove and --pins go together")
+    prover = Replay(Path(a.flashprove), Path(a.pins)) if a.flashprove else Prover(a.srs)
+    server = Server(prover, a.mode, a.delay, a.bits, a.slot, a.batch, a.period, a.deadline, a.lead, a.shift)
     host, _, port = a.listen.rpartition(":")
 
     async def run() -> None:
