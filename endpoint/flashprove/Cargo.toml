@@ -1,0 +1,6 @@
+[package]
+name = "pge-flashprove"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
