@@ -4,7 +4,8 @@
 Needs Linux, PGE_RUST_BIN (the dynamic build), PGE_CP_VERIFY (cp_verify built from FlashProve 9e2bdd8,
 matching device/flashprove_small.pins) and PGE_FP_FIXTURE (its examples/accepted-proof); skips without them.
 PGE_FP_DEADLINE sets the release deadline in seconds (default 3; one check takes about 0.7 s on a laptop VM
-and 5 s on the Pi 4). The confinement probe needs only Linux, PGE_RUST_BIN and a C compiler.
+and 5 s on the Pi 4). PGE_FP_CONFINE picks the verifier's confinement (default landlock; seccomp-only is for
+kernels without Landlock, aarch64 only). The confinement probe needs only Linux, PGE_RUST_BIN and a C compiler.
 """
 import asyncio
 import hashlib
@@ -31,7 +32,8 @@ from client import decode_failure_position, trace  # noqa: E402
 
 PINS = ROOT / "device" / "flashprove_small.pins"
 DEADLINE = float(os.environ.get("PGE_FP_DEADLINE", "3"))
-LOG_KEYS = {"ms", "result", "seq", "x_sha256", "reason", "failures"}
+CONFINE = os.environ.get("PGE_FP_CONFINE", "landlock")
+LOG_KEYS = {"ms", "result", "seq", "x_sha256", "reason", "failures", "confine"}
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="the FlashProve backend needs Linux")
 
@@ -64,8 +66,8 @@ class Patterned(Replay):
 def endpoint_args(binary, verifier, fixture, port, sport, jobs, log, deadline, extra):
     return [str(binary), "--listen", f"127.0.0.1:{port}", "--server", f"127.0.0.1:{sport}",
             "--bundle", str(fixture), "--pins", str(PINS), "--backend", "flashprove", "--verifier", str(verifier),
-            "--jobs", str(jobs), "--release", "fixed", "--deadline", str(deadline), "--spin-ms", "5",
-            "--log", str(log), *extra]
+            "--jobs", str(jobs), "--confine", CONFINE, "--release", "fixed", "--deadline", str(deadline),
+            "--spin-ms", "5", "--log", str(log), *extra]
 
 
 async def run_endpoint(binary, flashprove, work, prover=None, mode="honest", n=2, prompts=None,
@@ -118,6 +120,7 @@ def released(records):
 
 def test_the_stored_proof_passes_and_is_released_at_the_deadline(rust_bin, flashprove, tmp_path):  # noqa: F811
     rows, records, jobs, replay = asyncio.run(run_endpoint(rust_bin, flashprove, tmp_path / "w", n=3))
+    assert records[0] == {"result": "start", "confine": CONFINE}
     assert [r["answer"] for r in rows] == [{"id": i, "ok": True, "y": replay.reply} for i in range(3)]
     assert all(r["elapsed_ms"] >= DEADLINE * 1000 for r in rows)
     assert [r["result"] for r in released(records)] == ["accept"] * 3
@@ -299,10 +302,14 @@ PROBE = r"""
 #include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 extern char **environ;
 static void say(const char *name, int ok) { printf("%s %s\n", name, ok ? "ok" : "FAIL"); }
+static int refused(long r) { return r < 0 && (errno == EPERM || errno == EACCES); }
 int main(int argc, char **argv) {
     struct rlimit as, fsize, nofile;
     getrlimit(RLIMIT_AS, &as); getrlimit(RLIMIT_FSIZE, &fsize); getrlimit(RLIMIT_NOFILE, &nofile);
@@ -312,7 +319,22 @@ int main(int argc, char **argv) {
     say("reads_job", open(argv[3], O_RDONLY) >= 0);
     say("reads_bundle", open(argv[1], O_RDONLY | O_DIRECTORY) >= 0);
     int fd = open("/etc/hostname", O_RDONLY); say("no_other_files", fd < 0 && errno == EACCES);
-    fd = open(argv[3], O_WRONLY); say("no_writes", fd < 0 && errno == EACCES);
+    char other[4096];
+    say("no_writes", refused(open(argv[3], O_WRONLY)));
+    snprintf(other, sizeof other, "%s.new", argv[3]);
+    say("no_create", refused(open(other, O_WRONLY | O_CREAT, 0600)));
+    say("no_truncate", refused(open(argv[3], O_RDONLY | O_TRUNC)));
+    say("no_chmod", refused(fchmodat(AT_FDCWD, argv[3], 0600, 0)));
+    snprintf(other, sizeof other, "%s.d", argv[3]);
+    say("no_mkdir", refused(mkdirat(AT_FDCWD, other, 0700)));
+    say("no_rename", refused(renameat2(AT_FDCWD, argv[3], AT_FDCWD, argv[4], 0)));
+    say("no_rename2", refused(syscall(SYS_renameat2, AT_FDCWD, argv[3], AT_FDCWD, argv[4], 0)));
+    say("no_chmod2", refused(syscall(452, AT_FDCWD, argv[3], 0600, 0)));
+    snprintf(other, sizeof other, "%s.l", argv[3]);
+    say("no_link", refused(linkat(AT_FDCWD, argv[3], AT_FDCWD, other, 0)));
+    say("no_symlink", refused(symlinkat(argv[3], AT_FDCWD, other)));
+    say("no_xattr", refused(setxattr(argv[3], "user.pge", "x", 1, 0)));
+    say("no_unlink", refused(unlinkat(AT_FDCWD, argv[3], 0)));
     say("no_inet", socket(AF_INET, SOCK_STREAM, 0) < 0 && errno == EPERM);
     say("no_unix", socket(AF_UNIX, SOCK_STREAM, 0) < 0 && errno == EPERM);
     say("no_kill", kill(getppid(), 0) < 0 && errno == EPERM);
@@ -330,10 +352,17 @@ int main(int argc, char **argv) {
 """
 
 
-def test_the_confinement_refuses_what_a_verifier_never_needs(rust_bin, tmp_path):  # noqa: F811
+# Without Landlock the verifier can read its user's other files and run other programs; nothing else changes.
+WITHOUT_LANDLOCK = {"no_other_files", "forks_but_cannot_exec"}
+
+
+@pytest.mark.parametrize("confine", ["landlock", "seccomp-only"])
+def test_the_confinement_refuses_what_a_verifier_never_needs(rust_bin, tmp_path, confine):  # noqa: F811
     cc = shutil.which("cc") or shutil.which("gcc")
     if not cc:
         pytest.skip("needs a C compiler")
+    if confine == "seccomp-only" and os.uname().machine != "aarch64":
+        pytest.skip("seccomp-only is for aarch64")
     root = tmp_path / "root"
     (root / "config").mkdir(parents=True)
     (root / "ivk").mkdir()
@@ -343,15 +372,19 @@ def test_the_confinement_refuses_what_a_verifier_never_needs(rust_bin, tmp_path)
     job = root / "job-1"
     job.mkdir()
     for name in ("request", "next", "proof"):
-        (job / name).write_bytes(b"x")
+        (job / name).write_bytes(name.encode())
+    before = {p.name: (p.read_bytes(), p.stat().st_mode) for p in job.iterdir()}
     elf = probe.read_bytes()
     interp = elf[elf.index(b"/lib"):].split(b"\0")[0].decode()
-    args = [str(rust_bin), "--flashprove-child", "5", str(root), str(probe), str(Path(interp).resolve()),
+    args = [str(rust_bin), "--flashprove-child", confine, "5", str(root), str(probe), str(Path(interp).resolve()),
             str(root / "config"), str(root / "ivk"), str(job / "request"), str(job / "next"), str(job / "proof"), "a" * 64]
     done = subprocess.run(args, capture_output=True, timeout=30, env={"HOME": "/nonexistent", "PATH": "/usr/bin"})
     lines = done.stdout.decode().splitlines()
     assert done.returncode == 0, (done.returncode, lines, done.stderr)
-    assert len(lines) == 15 and all(l.endswith(" ok") for l in lines), lines
+    assert len(lines) == 26, lines
+    failed = {l.split()[0] for l in lines if not l.endswith(" ok")}
+    assert failed == (set() if confine == "landlock" else WITHOUT_LANDLOCK), lines
+    assert {p.name: (p.read_bytes(), p.stat().st_mode) for p in job.iterdir()} == before
 
 
 def test_flashprove_flags_are_checked(rust_bin, tmp_path):  # noqa: F811
@@ -361,6 +394,8 @@ def test_flashprove_flags_are_checked(rust_bin, tmp_path):  # noqa: F811
                   ["--backend", "flashprove", "--verifier", "/bin/true", "--proof-bytes", "10"],
                   ["--backend", "flashprove", "--verifier", "/bin/true", "--domain", str(PINS)],
                   ["--verifier", "/bin/true", "--proof-bytes", "10"],
+                  ["--confine", "seccomp-only", "--proof-bytes", "10"],
+                  ["--backend", "flashprove", "--verifier", "/bin/true", "--confine", "none"],
                   ["--backend", "other", "--proof-bytes", "10"]):
         done = subprocess.run(base + extra, capture_output=True, timeout=10)
         assert done.returncode == 2, extra

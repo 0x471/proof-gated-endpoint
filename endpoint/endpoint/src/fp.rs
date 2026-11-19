@@ -26,6 +26,7 @@ pub struct Flashprove {
     root: PathBuf,
     verifier: PathBuf,
     interpreter: Option<PathBuf>,
+    landlock: bool,
 }
 
 /// The program interpreter a dynamically linked 64-bit little-endian ELF file names (PT_INTERP).
@@ -75,7 +76,7 @@ fn write_new(path: &Path, data: &[u8], mode: u32) -> std::io::Result<()> {
 }
 
 impl Flashprove {
-    pub fn load(bundle: &Path, pins: &Path, verifier: &Path, jobs: &Path) -> Result<Self, String> {
+    pub fn load(bundle: &Path, pins: &Path, verifier: &Path, jobs: &Path, landlock: bool) -> Result<Self, String> {
         let text = read_regular(pins, 65536)?;
         let setup = parse_setup(std::str::from_utf8(&text).map_err(|_| "pins encoding")?)
             .map_err(|_| "invalid FlashProve pins")?;
@@ -116,7 +117,17 @@ impl Flashprove {
             root,
             verifier: copy,
             interpreter,
+            landlock,
         })
+    }
+
+    /// The confinement every check runs under, as `--confine` names it.
+    pub fn confinement(&self) -> &'static str {
+        if self.landlock {
+            "landlock"
+        } else {
+            "seccomp-only"
+        }
     }
 
     /// The private copies, read again before every check: a changed copy is an error, never a check.
@@ -163,6 +174,7 @@ impl Flashprove {
         let interpreter = self.interpreter.as_deref().unwrap_or(Path::new("-"));
         let mut cmd = Command::new(exe);
         cmd.arg("--flashprove-child")
+            .arg(self.confinement())
             .arg(left.as_secs_f64().ceil().max(1.).to_string())
             .arg(&self.root)
             .arg(&self.verifier)
@@ -184,25 +196,30 @@ impl Flashprove {
     }
 }
 
-/// `--flashprove-child CPU ROOT VERIFIER INTERPRETER CONFIG IVK REQUEST NEXT PROOF ID`: limits and
-/// confines this fresh process, then replaces it with one whole call of the verifier.
+/// `--flashprove-child CONFINE CPU ROOT VERIFIER INTERPRETER CONFIG IVK REQUEST NEXT PROOF ID`:
+/// limits and confines this fresh process, then replaces it with one whole call of the verifier.
 pub fn child(args: &[String]) -> ExitCode {
-    if args.len() != 11 {
+    if args.len() != 12 {
         return ExitCode::from(2);
     }
-    let Ok(cpu) = args[1].parse::<u64>() else {
+    let landlock = match args[1].as_str() {
+        "landlock" => true,
+        "seccomp-only" => false,
+        _ => return ExitCode::from(2),
+    };
+    let Ok(cpu) = args[2].parse::<u64>() else {
         return ExitCode::from(2);
     };
-    let interpreter = (args[4] != "-").then(|| Path::new(&args[4]));
+    let interpreter = (args[5] != "-").then(|| Path::new(&args[5]));
     if !process::die_with_parent()
         || process::limits(cpu).is_err()
-        || process::confine_verifier(Path::new(&args[2]), Path::new(&args[3]), interpreter).is_err()
+        || process::confine_verifier(Path::new(&args[3]), Path::new(&args[4]), interpreter, landlock).is_err()
     {
         return ExitCode::from(2);
     }
-    let _ = Command::new(&args[3])
-        .args(&args[5..10])
-        .args(["-id", &args[10], "-q"])
+    let _ = Command::new(&args[4])
+        .args(&args[6..11])
+        .args(["-id", &args[11], "-q"])
         .env_clear()
         .exec();
     ExitCode::from(2)
@@ -291,7 +308,7 @@ mod tests {
         let (src, pins, verifier) = bundle(&dir);
         let jobs = dir.join("jobs");
         fs::create_dir(&jobs).unwrap();
-        let fp = Flashprove::load(&src, &pins, &verifier, &jobs).unwrap();
+        let fp = Flashprove::load(&src, &pins, &verifier, &jobs, true).unwrap();
         assert!(fp.intact());
         use std::os::unix::fs::PermissionsExt;
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
@@ -300,7 +317,7 @@ mod tests {
         assert_eq!(mode(&fp.root.join("ivk/key.bin")), 0o400);
         assert_eq!(fs::read(fp.root.join("config/KL.bin")).unwrap(), b"config/KL.bin");
         // A second endpoint with the same process id can't reuse the directory.
-        assert!(Flashprove::load(&src, &pins, &verifier, &jobs).is_err());
+        assert!(Flashprove::load(&src, &pins, &verifier, &jobs, true).is_err());
         fs::remove_file(fp.root.join("ivk/key.bin")).unwrap();
         fs::write(fp.root.join("ivk/key.bin"), b"changed").unwrap();
         assert!(!fp.intact());
@@ -315,18 +332,18 @@ mod tests {
         let jobs = dir.join("jobs");
         fs::create_dir(&jobs).unwrap();
         fs::write(src.join("ivk/leaf/0.bin"), b"other").unwrap();
-        assert!(Flashprove::load(&src, &pins, &verifier, &jobs).is_err());
+        assert!(Flashprove::load(&src, &pins, &verifier, &jobs, true).is_err());
         fs::write(src.join("ivk/leaf/0.bin"), b"ivk/leaf/0.bin").unwrap();
         fs::remove_file(src.join("config/layout.txt")).unwrap();
-        assert!(Flashprove::load(&src, &pins, &verifier, &jobs).is_err());
+        assert!(Flashprove::load(&src, &pins, &verifier, &jobs, true).is_err());
         fs::write(src.join("config/layout.txt"), b"config/layout.txt").unwrap();
         let other = dir.join("other");
         fs::write(&other, b"not the pinned verifier").unwrap();
-        assert!(Flashprove::load(&src, &pins, &other, &jobs).is_err());
-        assert!(Flashprove::load(&src, &pins, &verifier, &dir.join("missing")).is_err());
+        assert!(Flashprove::load(&src, &pins, &other, &jobs, true).is_err());
+        assert!(Flashprove::load(&src, &pins, &verifier, &dir.join("missing"), true).is_err());
         // Nothing was created by the refused loads.
         assert_eq!(fs::read_dir(&jobs).unwrap().count(), 0);
-        assert!(Flashprove::load(&src, &pins, &verifier, &jobs).is_ok());
+        assert!(Flashprove::load(&src, &pins, &verifier, &jobs, true).is_ok());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

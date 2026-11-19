@@ -336,6 +336,52 @@ impl Filter {
         }
         self
     }
+    // Opens for writing, creating or truncating, and every call that creates, removes, renames,
+    // links or changes a file or its metadata, except through ioctl. Checked against the kernel's
+    // own table (asm-generic/unistd.h): libc has no aarch64 name for renameat (38) or fchmodat2.
+    // The older x86_64 calls (open, unlink, chmod, ...) are not listed, so without Landlock this
+    // keeps a process read-only only on aarch64.
+    #[cfg(target_os = "linux")]
+    fn read_only(self) -> Self {
+        const FCHMODAT2: libc::c_long = 452;
+        #[cfg(target_arch = "aarch64")]
+        const RENAMEAT: libc::c_long = 38;
+        #[cfg(target_arch = "x86_64")]
+        const RENAMEAT: libc::c_long = libc::SYS_renameat;
+        let write = (libc::O_WRONLY | libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC) as u32;
+        self.allow_unless(libc::SYS_openat, 2, write).deny(&[
+            libc::SYS_openat2,
+            libc::SYS_unlinkat,
+            RENAMEAT,
+            libc::SYS_renameat2,
+            libc::SYS_mkdirat,
+            libc::SYS_mknodat,
+            libc::SYS_symlinkat,
+            libc::SYS_linkat,
+            libc::SYS_truncate,
+            libc::SYS_ftruncate,
+            libc::SYS_fallocate,
+            libc::SYS_fchmod,
+            libc::SYS_fchmodat,
+            FCHMODAT2,
+            libc::SYS_fchown,
+            libc::SYS_fchownat,
+            libc::SYS_utimensat,
+            libc::SYS_setxattr,
+            libc::SYS_lsetxattr,
+            libc::SYS_fsetxattr,
+            libc::SYS_removexattr,
+            libc::SYS_lremovexattr,
+            libc::SYS_fremovexattr,
+            libc::SYS_open_tree,
+            libc::SYS_move_mount,
+            libc::SYS_fsopen,
+            libc::SYS_fsconfig,
+            libc::SYS_fsmount,
+            libc::SYS_fspick,
+            libc::SYS_mount_setattr,
+        ])
+    }
 
     fn install(self) -> io::Result<()> {
         self.finish(Self::DENY)
@@ -491,18 +537,24 @@ fn landlock(rules: &[(std::path::PathBuf, u64)]) -> io::Result<()> {
     Ok(())
 }
 
-/// Confines an external verifier just before it is executed. It may read only beneath `root` (the
-/// pinned copies and the job files), the system library directories and the loader cache, and
-/// execute only `verifier` and its program interpreter. The seccomp filter then refuses sockets,
-/// tracing, other processes' memory, signals by pid, new sessions, process groups and namespaces,
-/// keys, modules, io_uring and further kinds of exec. Forks and threads stay allowed: a whole
-/// `cp_verify` call forks one process per stage.
+/// Confines an external verifier just before it is executed. With `landlock` it may read only
+/// beneath `root` (the pinned copies and the job files), the system library directories and the
+/// loader cache, and execute only `verifier` and its program interpreter. The seccomp filter, in
+/// both modes, refuses changing any file, sockets, tracing, other processes' memory, signals by pid,
+/// new sessions, process groups and namespaces, keys, modules, io_uring and further kinds of exec.
+/// Without `landlock` (aarch64 only, for kernels built without it) the verifier can still read
+/// what its user can and execute other programs, which inherit the filter and the limits. Forks and
+/// threads stay allowed: a whole `cp_verify` call forks one process per stage.
 #[cfg(target_os = "linux")]
 pub fn confine_verifier(
     root: &std::path::Path,
     verifier: &std::path::Path,
     interpreter: Option<&std::path::Path>,
+    landlock: bool,
 ) -> io::Result<()> {
+    if !landlock && !cfg!(target_arch = "aarch64") {
+        return Err(io::Error::other("seccomp-only confinement is read-only only on aarch64"));
+    }
     const EXECUTE: u64 = 1;
     const READ_FILE: u64 = 1 << 2;
     const READ_DIR: u64 = 1 << 3;
@@ -523,7 +575,9 @@ pub fn confine_verifier(
     if std::path::Path::new("/etc/ld.so.cache").is_file() {
         rules.push(("/etc/ld.so.cache".into(), READ_FILE));
     }
-    landlock(&rules)?;
+    if landlock {
+        self::landlock(&rules)?;
+    }
     let namespaces = (libc::CLONE_NEWNS
         | libc::CLONE_NEWCGROUP
         | libc::CLONE_NEWUTS
@@ -572,6 +626,7 @@ pub fn confine_verifier(
             libc::SYS_execveat,
             libc::SYS_open_by_handle_at,
         ])
+        .read_only()
         .allow_unless(libc::SYS_clone, 0, namespaces)
         .install_allowing_rest()
 }
@@ -581,6 +636,7 @@ pub fn confine_verifier(
     _root: &std::path::Path,
     _verifier: &std::path::Path,
     _interpreter: Option<&std::path::Path>,
+    _landlock: bool,
 ) -> io::Result<()> {
     Err(io::Error::other("the external verifier needs Linux"))
 }

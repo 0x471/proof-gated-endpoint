@@ -493,7 +493,7 @@ pub fn run(mut config: Config) -> Result<(), String> {
         let Source::Pinned { bundle, pins, .. } = &source else {
             return Err("the FlashProve backend needs --bundle and --pins".into());
         };
-        let fp = Flashprove::load(bundle, pins, &files.verifier, &files.jobs)?;
+        let fp = Flashprove::load(bundle, pins, &files.verifier, &files.jobs, files.landlock)?;
         let p = &fp.setup.pins;
         let wire = TokenWire::new(p.prompt_len, p.reply_len, fp.setup.proof_max)
             .map_err(|_| "token wire")?;
@@ -575,6 +575,10 @@ fn serve(config: Config, backend: Backend, version: Option<u64>) -> Result<(), S
     };
     if let Some(v) = version {
         endpoint.log(json!({"result":"update","version":v}));
+    }
+    if let Backend::Flashprove { fp, .. } = &endpoint.backend {
+        let confine = fp.confinement();
+        endpoint.log(json!({"result":"start","confine":confine}));
     }
     // Threads write one byte here when they finish, so the poll below wakes for them.
     // One shared writer: cloning the socket per thread would need a descriptor each time,

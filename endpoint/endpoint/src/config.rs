@@ -25,6 +25,8 @@ pub enum Source {
 pub struct Flashprove {
     pub verifier: PathBuf,
     pub jobs: PathBuf,
+    /// False with `--confine seccomp-only`, for kernels built without Landlock.
+    pub landlock: bool,
 }
 pub struct Config {
     pub listen: SocketAddr,
@@ -80,6 +82,7 @@ impl Config {
             "--backend",
             "--verifier",
             "--jobs",
+            "--confine",
         ];
         while let Some(arg) = args.next() {
             let (key, value) = if let Some((k, v)) = arg.split_once('=') {
@@ -129,8 +132,8 @@ impl Config {
             return Err("--store takes the policy from the signed manifest".into());
         }
         let flashprove = match get("--backend", "ezkl") {
-            "ezkl" if map.contains_key("--verifier") || map.contains_key("--jobs") => {
-                return Err("--verifier and --jobs need --backend flashprove".into())
+            "ezkl" if ["--verifier", "--jobs", "--confine"].iter().any(|k| map.contains_key(*k)) => {
+                return Err("--verifier, --jobs and --confine need --backend flashprove".into())
             }
             "ezkl" => None,
             "flashprove" => {
@@ -141,9 +144,15 @@ impl Config {
                 if store_mode || map.contains_key("--domain") || map.contains_key("--proof-bytes") {
                     return Err("--backend flashprove takes its proof limit from its pins and has no store or domain".into());
                 }
+                let landlock = match get("--confine", "landlock") {
+                    "landlock" => true,
+                    "seccomp-only" if cfg!(target_arch = "aarch64") => false,
+                    _ => return Err("invalid confinement".into()),
+                };
                 Some(Flashprove {
                     verifier: required("--verifier")?.into(),
                     jobs: get("--jobs", "/dev/shm").into(),
+                    landlock,
                 })
             }
             _ => return Err("invalid backend".into()),

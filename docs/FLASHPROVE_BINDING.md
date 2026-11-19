@@ -5,7 +5,7 @@ binding in `BINDING_SPEC.md` is unchanged and remains the binding of the hardene
 here refers to FlashProve at commit 9e2bdd8ff5bf9c62f18263d7dac189b0400b260c: the request format, and
 the closing lines in `verifier/docs/output.md`. A later FlashProve revision needs this page re-checked.
 
-Status: built and tested on a Linux VM, not yet run on the Pi. `endpoint/flashprove` builds the
+Status: built and tested on a Linux VM; the verifier alone checked on the Pi 4, the endpoint not yet. `endpoint/flashprove` builds the
 statement, reads the answer and parses the pins file; `endpoint/endpoint/src/fp.rs` holds the bundle copy,
 the job files and the launcher; the service runs it with `--backend flashprove`. The tests are listed
 under [Checks](#checks).
@@ -96,12 +96,22 @@ Every message has one canonical encoding; anything else is refused.
   `/lib64`, `/usr/lib`, `/usr/lib64`, whichever exist) and `/etc/ld.so.cache`; execute access to the
   verifier copy and its program interpreter (read from the ELF file at start-up) only. From Landlock
   ABI 4 no TCP bind or connect; from ABI 6 no signals or abstract sockets outside the verifier's own
-  processes. A kernel without Landlock makes every check an error.
-- Seccomp, allowing everything else, refuses: sockets, socket pairs, connect, bind, listen, accept;
+  processes. A kernel without Landlock makes every check an error, unless the endpoint is started with
+  `--confine seccomp-only` (aarch64 only): then Landlock is skipped and the rest below still applies.
+  The Pi's stock Raspberry Pi OS kernel is built without Landlock, so the Pi experiments use this mode.
+- Seccomp, allowing everything else, refuses: opening a file to write, create or truncate it, and every
+  call that creates, removes, renames, links or changes a file or its metadata except `ioctl` (which
+  the verifier uses, so file flags settable through it on a read-only descriptor stay possible), checked
+  against the kernel's own call table; sockets, socket pairs,
+  connect, bind, listen, accept;
   ptrace and reading or writing other processes' memory; `kill` and pidfd signals; new sessions and
   process groups; namespaces (`unshare`, `setns`, namespace flags on `clone`); mounts and `chroot`;
   BPF, perf events, userfaultfd, io_uring, keys, module loading, `kexec_load`; `memfd_create`,
-  `execveat` and `open_by_handle_at`. None of these is in a traced whole call.
+  `execveat` and `open_by_handle_at`. None of these is in a traced whole call, on the VM or the Pi.
+  The older x86_64 file calls (`open`, `unlink`, `chmod` and so on) are not in the list, which is why
+  `seccomp-only` is refused on x86_64.
+- The endpoint's first log record names the confinement: `{"confine": "landlock" | "seccomp-only",
+  "result": "start"}`.
 - With `--release-cpu N` the checking thread, and so the verifier and its stages, runs on the other
   CPUs.
 
@@ -112,6 +122,9 @@ protections:
 
 - The endpoint process itself is not confined: only the static build confines itself, and that build
   can execute nothing but its own binary.
+- With `--confine seccomp-only` (the stock Pi kernel) the verifier can read every file its user can and
+  execute other programs. Those programs keep its limits and its seccomp filter: no network, no file
+  changes, no tracing. A program it starts this way is not killed with the endpoint.
 - The verifier runs as the endpoint's user. `kill` is refused, but before Landlock ABI 6 it could still
   signal that user's processes with `tgkill`.
 - Memory is limited per process; the endpoint does not limit the whole tree. Run it in a cgroup with a
@@ -136,8 +149,9 @@ protections:
   release nothing extra; a check past its deadline is killed with its children and leaves no job
   directory; a dead endpoint takes its verifier with it; the verifier runs with the limits above,
   no-new-privileges, a seccomp filter and off the release CPU; logs carry no proof material; the
-  failure cap matches `observer/cap_model.py`. With only a C compiler instead of `cp_verify`, a probe
-  checks the confinement itself.
+  failure cap matches `observer/cap_model.py`. `PGE_FP_CONFINE=seccomp-only` runs all of it in that mode.
+  With only a C compiler instead of `cp_verify`, a probe checks the confinement itself in both modes:
+  without Landlock exactly two of its 26 checks change (other files readable, other programs runnable).
 - `device/flashprove_contract.sh`: the verifier alone on the stored proof and changed copies of it.
 - `device/flashprove_gate.sh`: the same gate on the Pi, through `device/flashprove_scenario.sh`.
 
