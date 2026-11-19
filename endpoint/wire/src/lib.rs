@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod tokens;
+
 pub const MAX_ID: u64 = 1 << 53;
 pub const PROOF_MAX: usize = 65536;
 
