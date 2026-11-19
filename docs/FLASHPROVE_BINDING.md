@@ -5,8 +5,10 @@ binding in `BINDING_SPEC.md` is unchanged and remains the binding of the hardene
 here refers to FlashProve at commit 9e2bdd8ff5bf9c62f18263d7dac189b0400b260c: the request format, and
 the closing lines in `verifier/docs/output.md`. A later FlashProve revision needs this page re-checked.
 
-Status: the statement builder and the answer reader exist in `endpoint/flashprove` with tests. The
-wire mode, pins file, job files, confined launcher and service glue are planned.
+Status: built and tested on a Linux VM, not yet run on the Pi. `endpoint/flashprove` builds the
+statement, reads the answer and parses the pins file; `endpoint/endpoint/src/fp.rs` holds the bundle copy,
+the job files and the launcher; the service runs it with `--backend flashprove`. The tests are listed
+under [Checks](#checks).
 
 ## The claim
 
@@ -35,6 +37,11 @@ None of these comes from the server or from the verifier's output.
 - `sh`, the amount of proof of work accepted (decided before any run), the commitment's
   `commitment-assumed-rounds`, and the largest proof the wire accepts.
 
+All of these are in one pins file, `device/flashprove_small.pins` for the stored proof: one `key value`
+line per setting and one `file <path> <sha256>` line per bundle file, each exactly once. Its `work 32`
+was decided on 19 Nov before any run: the stored proof reaches 128 bits in its weakest round only with
+32 bits of proof of work counted, so a setup accepting less would refuse it.
+
 ## Building the statement
 
 From the admitted prompt ids and the server's continuation ids:
@@ -51,23 +58,88 @@ From the admitted prompt ids and the server's continuation ids:
 
 The endpoint never uses a request file, ID or configuration supplied by the server.
 
+## Messages
+
+The token messages have their own kind bytes, so they never parse as EZKL messages
+(`endpoint/wire/src/tokens.rs`, `pge/tokens.py`). Each is framed like every other message, with a 4-byte
+big-endian length, and starts with its kind and a big-endian 64-bit id below 2^53; token ids are
+big-endian 32-bit words.
+
+| Kind | Message | After the id |
+|---|---|---|
+| 5 | request, client to endpoint | NP prompt ids |
+| 6 | forward, endpoint to server | the same NP ids |
+| 7 | answer, server to endpoint | NC reply ids, then the proof (1 byte up to the pinned limit) |
+| 8 | reply, endpoint to client | status 0 and NC ids, or status 1 (bad request) or 2 (unavailable) and NC zero words |
+
+Every message has one canonical encoding; anything else is refused.
+
 ## Running the verifier
 
-- One whole call (key, leaf and request stages) on the pinned files, the endpoint-built request and
-  next-token files and the server's proof, with `-id` set to the pinned ID. No `-policy`, no
-  `-next-token`, no `-show-stages`. Never assemble a verdict from part-calls or earlier calls.
-- The three per-check files go into a private directory on tmpfs, created exclusively, owner-only, and
-  removed after the check.
-- The verifier runs in its own process group with an empty environment, under a deadline equal to the
-  time left before the request's release, with standard output capped. At the deadline the whole
-  group is killed and every child reaped.
-- Confinement for the experiment: limits on CPU, open files and file growth; Landlock read access to
-  the pinned bundle and the job directory, execute access to the pinned verifier only; seccomp
-  refusing network sockets and ptrace while allowing the forks the verifier needs. The hardened
-  image's parent profile allows only the endpoint's own binary to run, so these experiments use a
-  separate, recorded stock-Linux profile, and the protections it lacks are listed with its results.
-- Memory limits are per process, and the verifier forks one process per stage, so the whole tree's
-  memory is measured and capped as a whole where the system allows.
+- At start-up the endpoint hashes every pinned bundle file and the verifier, refuses to start on any
+  mismatch, and copies them into a new private directory `<jobs>/pge-flashprove-<pid>` (`--jobs`,
+  default `/dev/shm`): directories 0700, files 0400, the verifier 0500. Before every check it hashes the
+  copies again; a changed copy makes the check an error.
+- One whole call (key, leaf and request stages) on the copies, the endpoint-built request and
+  next-token files and the server's proof: `cp_verify CONFIG IVK request next proof -id <pinned ID> -q`.
+  No `-policy`, no `-next-token`, no `-show-stages`, no `-j` (one thread for the request stage). Never
+  assemble a verdict from part-calls or earlier calls.
+- The three per-check files go into `job-<seq>` in the private directory, created exclusively,
+  owner-only and read-only, and removed after the check whatever its outcome.
+- The endpoint starts its own binary in `--flashprove-child` mode, in a new process group with an empty
+  environment. That process asks to be killed if the checking thread dies, lowers its limits (CPU
+  seconds = the whole seconds left before the release, at least 1; 256 MiB of address space; no file
+  growth; 64 open files; no core dumps), confines itself, then becomes `cp_verify`, whose stage
+  processes inherit all of it. At the deadline the whole group is killed. Standard output and error
+  together are capped at 64 KiB; any standard error makes the check an error.
+- Landlock: read access beneath the private directory, the system library directories (`/lib`,
+  `/lib64`, `/usr/lib`, `/usr/lib64`, whichever exist) and `/etc/ld.so.cache`; execute access to the
+  verifier copy and its program interpreter (read from the ELF file at start-up) only. From Landlock
+  ABI 4 no TCP bind or connect; from ABI 6 no signals or abstract sockets outside the verifier's own
+  processes. A kernel without Landlock makes every check an error.
+- Seccomp, allowing everything else, refuses: sockets, socket pairs, connect, bind, listen, accept;
+  ptrace and reading or writing other processes' memory; `kill` and pidfd signals; new sessions and
+  process groups; namespaces (`unshare`, `setns`, namespace flags on `clone`); mounts and `chroot`;
+  BPF, perf events, userfaultfd, io_uring, keys, module loading, `kexec_load`; `memfd_create`,
+  `execveat` and `open_by_handle_at`. None of these is in a traced whole call.
+- With `--release-cpu N` the checking thread, and so the verifier and its stages, runs on the other
+  CPUs.
+
+## What this setup lacks
+
+The FlashProve experiments run on a stock Linux card, not on the frozen image, and lack some of its
+protections:
+
+- The endpoint process itself is not confined: only the static build confines itself, and that build
+  can execute nothing but its own binary.
+- The verifier runs as the endpoint's user. `kill` is refused, but before Landlock ABI 6 it could still
+  signal that user's processes with `tgkill`.
+- Memory is limited per process; the endpoint does not limit the whole tree. Run it in a cgroup with a
+  memory limit for experiments.
+- Between the hash check and the verifier reading the copies, another process of the same user could
+  change them.
+- If the endpoint itself dies during a check, the job directory stays behind, and the verifier's stage
+  processes are bounded only by their CPU limit (the main verifier process is killed).
+- Every request is the one stored statement, so every honest check does the same work.
+
+## Checks
+
+- `cargo test -p pge-flashprove`: the statement builder (the stored request byte for byte), the answer
+  reader on outputs captured from real calls (`endpoint/flashprove/tests/data/small/outputs`) and on
+  every changed field, and the pins parser.
+- `cargo test -p pge-endpoint`: the ELF interpreter reader and, on Linux, the bundle copy and its
+  refusals.
+- `pytest tests/test_tokens.py`: the Python token format against byte vectors shared with the Rust tests.
+- On Linux, with `PGE_RUST_BIN` (the dynamic build), `PGE_CP_VERIFY` and `PGE_FP_FIXTURE` set,
+  `pytest tests/test_endpoint_rust_flashprove.py`: the stored proof passes at the deadline; a changed
+  prompt, first or last reply token or proof bit is refused; malformed, stale and duplicate answers
+  release nothing extra; a check past its deadline is killed with its children and leaves no job
+  directory; a dead endpoint takes its verifier with it; the verifier runs with the limits above,
+  no-new-privileges, a seccomp filter and off the release CPU; logs carry no proof material; the
+  failure cap matches `observer/cap_model.py`. With only a C compiler instead of `cp_verify`, a probe
+  checks the confinement itself.
+- `device/flashprove_contract.sh`: the verifier alone on the stored proof and changed copies of it.
+- `device/flashprove_gate.sh`: the same gate on the Pi, through `device/flashprove_scenario.sh`.
 
 ## Reading the answer
 
