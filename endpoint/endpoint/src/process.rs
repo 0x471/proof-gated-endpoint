@@ -330,9 +330,21 @@ impl Filter {
         self.allow_unless(libc::SYS_mmap, 2, libc::PROT_EXEC as u32)
             .allow_unless(libc::SYS_mprotect, 2, libc::PROT_EXEC as u32)
     }
+    fn deny(mut self, nrs: &[libc::c_long]) -> Self {
+        for &nr in nrs {
+            self.0.extend([Self::eq(nr as u32, 0, 1), Self::ret(Self::DENY)]);
+        }
+        self
+    }
 
-    fn install(mut self) -> io::Result<()> {
-        self.0.push(Self::ret(Self::DENY));
+    fn install(self) -> io::Result<()> {
+        self.finish(Self::DENY)
+    }
+    fn install_allowing_rest(self) -> io::Result<()> {
+        self.finish(Self::ALLOW)
+    }
+    fn finish(mut self, last: u32) -> io::Result<()> {
+        self.0.push(Self::ret(last));
         let fprog = libc::sock_fprog {
             len: u16::try_from(self.0.len()).map_err(|_| io::Error::other("filter size"))?,
             filter: self.0.as_mut_ptr(),
@@ -388,6 +400,189 @@ pub fn sandbox() -> io::Result<()> {
 #[cfg(not(target_os = "linux"))]
 pub fn sandbox() -> io::Result<()> {
     Ok(())
+}
+
+/// Asks for SIGKILL when the thread that started this process ends, so a check can't outlive an
+/// endpoint that died; false if that can't be set or the parent is already gone. A verifier's own
+/// children don't inherit it, so they are bounded only by their CPU limit in that case.
+#[cfg(target_os = "linux")]
+pub fn die_with_parent() -> bool {
+    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) == 0 && libc::getppid() != 1 }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn die_with_parent() -> bool {
+    false
+}
+
+/// Landlock for an external verifier: every right this kernel knows is handled, and `rules` grant
+/// rights beneath each path. From ABI 4 it may not bind or connect TCP; from ABI 6 it may not signal
+/// or reach abstract sockets outside its own domain.
+#[cfg(target_os = "linux")]
+fn landlock(rules: &[(std::path::PathBuf, u64)]) -> io::Result<()> {
+    use std::os::{
+        fd::{FromRawFd, OwnedFd},
+        unix::ffi::OsStrExt,
+    };
+    const CREATE: libc::c_long = 444;
+    const ADD_RULE: libc::c_long = 445;
+    const RESTRICT: libc::c_long = 446;
+    const VERSION: u32 = 1;
+    const PATH_BENEATH: u32 = 1;
+    #[repr(C)]
+    struct Ruleset {
+        handled_fs: u64,
+        handled_net: u64,
+        scoped: u64,
+    }
+    #[repr(C, packed)]
+    struct PathBeneath {
+        allowed: u64,
+        parent: i32,
+    }
+    // Raw system calls on values that live until the calls return; every fd is owned once made.
+    unsafe {
+        let abi = libc::syscall(CREATE, std::ptr::null::<Ruleset>(), 0usize, VERSION);
+        if abi < 1 {
+            return Err(io::Error::other("landlock is not available"));
+        }
+        let handled_fs: u64 = match abi {
+            1 => (1 << 13) - 1,
+            2 => (1 << 14) - 1,
+            3 | 4 => (1 << 15) - 1,
+            _ => (1 << 16) - 1,
+        };
+        let attr = Ruleset {
+            handled_fs,
+            handled_net: if abi >= 4 { 3 } else { 0 },
+            scoped: if abi >= 6 { 3 } else { 0 },
+        };
+        let size: usize = match abi {
+            1..=3 => 8,
+            4 | 5 => 16,
+            _ => 24,
+        };
+        let fd = libc::syscall(CREATE, &attr as *const Ruleset, size, 0u32);
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let ruleset = OwnedFd::from_raw_fd(fd as i32);
+        for (path, allowed) in rules {
+            let c = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
+            let fd = libc::open(c.as_ptr(), libc::O_PATH | libc::O_CLOEXEC);
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let parent = OwnedFd::from_raw_fd(fd);
+            let rule = PathBeneath {
+                allowed: allowed & handled_fs,
+                parent: parent.as_raw_fd(),
+            };
+            if libc::syscall(ADD_RULE, ruleset.as_raw_fd(), PATH_BENEATH, &rule as *const PathBeneath, 0u32) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0
+            || libc::syscall(RESTRICT, ruleset.as_raw_fd(), 0u32) != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+/// Confines an external verifier just before it is executed. It may read only beneath `root` (the
+/// pinned copies and the job files), the system library directories and the loader cache, and
+/// execute only `verifier` and its program interpreter. The seccomp filter then refuses sockets,
+/// tracing, other processes' memory, signals by pid, new sessions, process groups and namespaces,
+/// keys, modules, io_uring and further kinds of exec. Forks and threads stay allowed: a whole
+/// `cp_verify` call forks one process per stage.
+#[cfg(target_os = "linux")]
+pub fn confine_verifier(
+    root: &std::path::Path,
+    verifier: &std::path::Path,
+    interpreter: Option<&std::path::Path>,
+) -> io::Result<()> {
+    const EXECUTE: u64 = 1;
+    const READ_FILE: u64 = 1 << 2;
+    const READ_DIR: u64 = 1 << 3;
+    let mut rules = vec![
+        (root.to_path_buf(), READ_FILE | READ_DIR),
+        (verifier.to_path_buf(), EXECUTE | READ_FILE),
+    ];
+    if let Some(i) = interpreter {
+        rules.push((i.to_path_buf(), EXECUTE | READ_FILE));
+    }
+    for lib in ["/lib", "/lib64", "/usr/lib", "/usr/lib64"] {
+        if let Ok(p) = std::fs::canonicalize(lib) {
+            if !rules.iter().any(|(r, _)| *r == p) {
+                rules.push((p, READ_FILE | READ_DIR));
+            }
+        }
+    }
+    if std::path::Path::new("/etc/ld.so.cache").is_file() {
+        rules.push(("/etc/ld.so.cache".into(), READ_FILE));
+    }
+    landlock(&rules)?;
+    let namespaces = (libc::CLONE_NEWNS
+        | libc::CLONE_NEWCGROUP
+        | libc::CLONE_NEWUTS
+        | libc::CLONE_NEWIPC
+        | libc::CLONE_NEWUSER
+        | libc::CLONE_NEWPID
+        | libc::CLONE_NEWNET) as u32;
+    Filter::new()
+        .deny(&[
+            libc::SYS_socket,
+            libc::SYS_socketpair,
+            libc::SYS_connect,
+            libc::SYS_bind,
+            libc::SYS_listen,
+            libc::SYS_accept,
+            libc::SYS_accept4,
+            libc::SYS_ptrace,
+            libc::SYS_process_vm_readv,
+            libc::SYS_process_vm_writev,
+            libc::SYS_kill,
+            libc::SYS_pidfd_open,
+            libc::SYS_pidfd_send_signal,
+            libc::SYS_pidfd_getfd,
+            libc::SYS_setsid,
+            libc::SYS_setpgid,
+            libc::SYS_unshare,
+            libc::SYS_setns,
+            libc::SYS_mount,
+            libc::SYS_umount2,
+            libc::SYS_pivot_root,
+            libc::SYS_chroot,
+            libc::SYS_bpf,
+            libc::SYS_perf_event_open,
+            libc::SYS_userfaultfd,
+            libc::SYS_io_uring_setup,
+            libc::SYS_io_uring_enter,
+            libc::SYS_io_uring_register,
+            libc::SYS_keyctl,
+            libc::SYS_add_key,
+            libc::SYS_request_key,
+            libc::SYS_kexec_load,
+            libc::SYS_init_module,
+            libc::SYS_finit_module,
+            libc::SYS_delete_module,
+            libc::SYS_memfd_create,
+            libc::SYS_execveat,
+            libc::SYS_open_by_handle_at,
+        ])
+        .allow_unless(libc::SYS_clone, 0, namespaces)
+        .install_allowing_rest()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn confine_verifier(
+    _root: &std::path::Path,
+    _verifier: &std::path::Path,
+    _interpreter: Option<&std::path::Path>,
+) -> io::Result<()> {
+    Err(io::Error::other("the external verifier needs Linux"))
 }
 
 /// Moves the calling thread onto `cpu` and returns the other CPUs it was allowed, for the threads
