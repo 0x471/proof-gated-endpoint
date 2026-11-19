@@ -20,10 +20,17 @@ pub enum Source {
         device: String,
     },
 }
+/// The FlashProve backend's external verifier and where its private files go.
+#[derive(Clone)]
+pub struct Flashprove {
+    pub verifier: PathBuf,
+    pub jobs: PathBuf,
+}
 pub struct Config {
     pub listen: SocketAddr,
     pub server: SocketAddr,
     pub source: Source,
+    pub flashprove: Option<Flashprove>,
     pub log: Option<PathBuf>,
     pub policy: Policy,
     pub proof_bytes: usize,
@@ -70,6 +77,9 @@ impl Config {
             "--root",
             "--device",
             "--release-cpu",
+            "--backend",
+            "--verifier",
+            "--jobs",
         ];
         while let Some(arg) = args.next() {
             let (key, value) = if let Some((k, v)) = arg.split_once('=') {
@@ -118,8 +128,29 @@ impl Config {
         if store_mode && policy_flags.iter().any(|k| map.contains_key(*k)) {
             return Err("--store takes the policy from the signed manifest".into());
         }
-        // In store mode these placeholders are replaced by the manifest's policy at start-up.
-        let proof_bytes = if store_mode {
+        let flashprove = match get("--backend", "ezkl") {
+            "ezkl" if map.contains_key("--verifier") || map.contains_key("--jobs") => {
+                return Err("--verifier and --jobs need --backend flashprove".into())
+            }
+            "ezkl" => None,
+            "flashprove" => {
+                // The static build confines itself so that it can exec only its own binary.
+                if !cfg!(all(target_os = "linux", not(target_env = "musl"))) {
+                    return Err("the FlashProve backend needs the dynamic Linux build".into());
+                }
+                if store_mode || map.contains_key("--domain") || map.contains_key("--proof-bytes") {
+                    return Err("--backend flashprove takes its proof limit from its pins and has no store or domain".into());
+                }
+                Some(Flashprove {
+                    verifier: required("--verifier")?.into(),
+                    jobs: get("--jobs", "/dev/shm").into(),
+                })
+            }
+            _ => return Err("invalid backend".into()),
+        };
+        // In store mode these placeholders are replaced by the manifest's policy at start-up, and
+        // the FlashProve backend's proof limit comes from its pins.
+        let proof_bytes = if store_mode || flashprove.is_some() {
             "1"
         } else {
             required("--proof-bytes")?
@@ -174,6 +205,7 @@ impl Config {
             listen: address(required("--listen")?)?,
             server: address(required("--server")?)?,
             source,
+            flashprove,
             log: map.get("--log").map(PathBuf::from),
             policy,
             proof_bytes,

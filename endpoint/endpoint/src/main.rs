@@ -1,4 +1,5 @@
 mod config;
+mod fp;
 mod network;
 mod process;
 mod service;
@@ -75,11 +76,14 @@ fn main() -> ExitCode {
     if args.first().map(String::as_str) == Some("--verify-child") {
         return child(&args);
     }
+    if args.first().map(String::as_str) == Some("--flashprove-child") {
+        return fp::child(&args);
+    }
     if args.first().map(String::as_str) == Some("--apply-update") {
         return store::apply(&args);
     }
     if args == ["--help"] {
-        println!("pge-endpoint --listen HOST:PORT --server HOST:PORT --bundle DIR --pins FILE --proof-bytes N [--domain FILE] [--deadline SECONDS] [--max-pending N] [--halt-after N] [--log FILE] [--spin-ms MS] [--release arrival|fixed] [--idle SECONDS] [--cap-window W --cap-failures F --cap-cooldown C] [--release-cpu N]\n  instead of --bundle/--pins/--domain: --store DIR --root FILE --device ID\npge-endpoint --apply-update DIR --root FILE --device ID --store DIR");
+        println!("pge-endpoint --listen HOST:PORT --server HOST:PORT --bundle DIR --pins FILE --proof-bytes N [--domain FILE] [--deadline SECONDS] [--max-pending N] [--halt-after N] [--log FILE] [--spin-ms MS] [--release arrival|fixed] [--idle SECONDS] [--cap-window W --cap-failures F --cap-cooldown C] [--release-cpu N]\n  instead of --bundle/--pins/--domain: --store DIR --root FILE --device ID\n  FlashProve (Linux, dynamic build): --backend flashprove --verifier FILE [--jobs DIR], with --bundle and --pins and without --proof-bytes or --domain\npge-endpoint --apply-update DIR --root FILE --device ID --store DIR");
         return ExitCode::SUCCESS;
     }
     match config::Config::parse(args).and_then(service::run) {

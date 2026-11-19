@@ -1,10 +1,15 @@
 use crate::{
     config::{Config, Source},
+    fp::Flashprove,
     network::{Connection, Input},
 };
 use pge_core::{Admission, Answer, Core, Decision, Mode, Step};
-use pge_verify::{read_regular, Bundle, Domain, Pins, Verdict};
-use pge_wire::{Message, Reply, Wire};
+use pge_flashprove::Statement;
+use pge_verify::{digest, read_regular, Bundle, Domain, Pins, Verdict};
+use pge_wire::{
+    tokens::{TokenMessage, TokenReply, TokenWire},
+    Message, Reply, Wire,
+};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -28,23 +33,155 @@ struct Client {
     read_since: Instant,
     drain_until: Option<Instant>,
 }
+enum Question {
+    Floats(Vec<f64>),
+    Tokens(Vec<u32>),
+}
+enum Proven {
+    Floats(Vec<f64>),
+    Tokens(Vec<u32>),
+}
+enum Status {
+    Ok(Proven),
+    BadRequest,
+    Unavailable,
+}
+enum Body {
+    Ezkl(Vec<[u8; 32]>, Vec<u8>),
+    Tokens(Vec<u32>, Vec<u8>),
+}
+enum Work {
+    Ezkl(Vec<u8>),
+    Flashprove(Statement, Vec<u8>),
+}
+enum Checker {
+    Ezkl(Arc<Bundle>),
+    Flashprove(Arc<Flashprove>),
+}
+/// The proof system with its message format; everything else in the endpoint is shared.
+enum Backend {
+    Ezkl {
+        bundle: Arc<Bundle>,
+        domain: Option<Domain>,
+        wire: Wire,
+    },
+    Flashprove {
+        fp: Arc<Flashprove>,
+        wire: TokenWire,
+    },
+}
+impl Backend {
+    fn request_size(&self) -> usize {
+        match self {
+            Backend::Ezkl { wire, .. } => wire.request_size,
+            Backend::Flashprove { wire, .. } => wire.request_size,
+        }
+    }
+    fn answer_max(&self) -> usize {
+        match self {
+            Backend::Ezkl { wire, .. } => wire.answer_max,
+            Backend::Flashprove { wire, .. } => wire.answer_max,
+        }
+    }
+    fn parse_request(&self, raw: &[u8]) -> Option<(u64, Question)> {
+        match self {
+            Backend::Ezkl { wire, .. } => match wire.parse(1, raw) {
+                Ok(Message::Request(cid, x)) => Some((cid, Question::Floats(x))),
+                _ => None,
+            },
+            Backend::Flashprove { wire, .. } => match wire.parse(pge_wire::tokens::REQUEST, raw) {
+                Ok(TokenMessage::Request(cid, ids)) => Some((cid, Question::Tokens(ids))),
+                _ => None,
+            },
+        }
+    }
+    fn parse_answer(&self, raw: &[u8]) -> Option<(u64, Body)> {
+        match self {
+            Backend::Ezkl { wire, .. } => match wire.parse(3, raw) {
+                Ok(Message::Answer(seq, outputs, proof)) => Some((seq, Body::Ezkl(outputs, proof))),
+                _ => None,
+            },
+            Backend::Flashprove { wire, .. } => match wire.parse(pge_wire::tokens::ANSWER, raw) {
+                Ok(TokenMessage::Answer(seq, ids, proof)) => Some((seq, Body::Tokens(ids, proof))),
+                _ => None,
+            },
+        }
+    }
+    fn forward(&self, seq: u64, x: &Question) -> Option<Vec<u8>> {
+        match (self, x) {
+            (Backend::Ezkl { wire, .. }, Question::Floats(x)) => wire.encode(&Message::Forward(seq, x.clone())).ok(),
+            (Backend::Flashprove { wire, .. }, Question::Tokens(ids)) => {
+                wire.encode(&TokenMessage::Forward(seq, ids.clone())).ok()
+            }
+            _ => None,
+        }
+    }
+    fn reply(&self, cid: u64, status: Status) -> Option<Vec<u8>> {
+        match self {
+            Backend::Ezkl { wire, .. } => {
+                let reply = match status {
+                    Status::Ok(Proven::Floats(y)) => Reply::Ok(y),
+                    Status::Ok(Proven::Tokens(_)) => return None,
+                    Status::BadRequest => Reply::BadRequest,
+                    Status::Unavailable => Reply::Unavailable,
+                };
+                wire.encode(&Message::Reply(cid, reply)).ok()
+            }
+            Backend::Flashprove { wire, .. } => {
+                let reply = match status {
+                    Status::Ok(Proven::Tokens(ids)) => TokenReply::Ok(ids),
+                    Status::Ok(Proven::Floats(_)) => return None,
+                    Status::BadRequest => TokenReply::BadRequest,
+                    Status::Unavailable => TokenReply::Unavailable,
+                };
+                wire.encode(&TokenMessage::Reply(cid, reply)).ok()
+            }
+        }
+    }
+    /// The digest logged for an admitted question, or None if it can never be answered.
+    fn request_hash(&self, x: &Question) -> Option<String> {
+        match (self, x) {
+            (Backend::Ezkl { bundle, domain, .. }, Question::Floats(x)) => {
+                let n = bundle.spec.quantize(x).ok()?;
+                let admitted = domain
+                    .as_ref()
+                    .is_none_or(|d| bundle.spec.input_lens.len() == 1 && d.admits(&n));
+                if !admitted {
+                    return None;
+                }
+                bundle.spec.request_hash(&n).ok()
+            }
+            (Backend::Flashprove { fp, .. }, Question::Tokens(ids)) => {
+                if ids.iter().any(|&t| t >= fp.setup.pins.vocab) {
+                    return None;
+                }
+                Some(digest(&ids.iter().flat_map(|t| t.to_be_bytes()).collect::<Vec<u8>>()))
+            }
+            _ => None,
+        }
+    }
+    fn checker(&self) -> Checker {
+        match self {
+            Backend::Ezkl { bundle, .. } => Checker::Ezkl(Arc::clone(bundle)),
+            Backend::Flashprove { fp, .. } => Checker::Flashprove(Arc::clone(fp)),
+        }
+    }
+}
 struct Request {
     client: u64,
     cid: u64,
-    x: Vec<f64>,
+    x: Question,
     hash: String,
     start: u64,
-    y: Option<Vec<f64>>,
+    y: Option<Proven>,
 }
 struct Job {
     seq: u64,
-    data: Vec<u8>,
+    work: Work,
 }
 struct Endpoint {
     config: Config,
-    bundle: Arc<Bundle>,
-    domain: Option<Domain>,
-    wire: Wire,
+    backend: Backend,
     core: Core,
     clock: Instant,
     log: Box<dyn Write>,
@@ -75,8 +212,8 @@ impl Endpoint {
             self.log(json!({"result":"halted","failures":n}));
         }
     }
-    fn send(&mut self, client: u64, cid: u64, reply: Reply) {
-        let Ok(payload) = self.wire.encode(&Message::Reply(cid, reply)) else {
+    fn send(&mut self, client: u64, cid: u64, reply: Status) {
+        let Some(payload) = self.backend.reply(cid, reply) else {
             return;
         };
         if let Some(c) = self.clients.get_mut(&client) {
@@ -98,9 +235,9 @@ impl Endpoint {
                     }
                     if let Some(p) = self.requests.remove(&seq) {
                         let reply = if decision.ok() {
-                            p.y.map(Reply::Ok).unwrap_or(Reply::Unavailable)
+                            p.y.map(Status::Ok).unwrap_or(Status::Unavailable)
                         } else {
-                            Reply::Unavailable
+                            Status::Unavailable
                         };
                         self.send(p.client, p.cid, reply);
                         let ms = ((self.now().saturating_sub(p.start)) as f64 / 100_000.)
@@ -135,27 +272,16 @@ impl Endpoint {
             let _ = self.pump(false);
         }
     }
-    fn submit(&mut self, client: u64, cid: u64, x: Vec<f64>) {
-        let n = self.bundle.spec.quantize(&x);
-        let valid = n.as_ref().is_ok_and(|n| {
-            self.domain
-                .as_ref()
-                .is_none_or(|d| self.bundle.spec.input_lens.len() == 1 && d.admits(n))
-        });
-        if !valid {
-            self.send(client, cid, Reply::BadRequest);
-            self.log(json!({"result":"bad_request","reason":"request"}));
-            return;
-        }
-        let Ok(hash) = n.and_then(|n| self.bundle.spec.request_hash(&n)) else {
-            self.send(client, cid, Reply::BadRequest);
+    fn submit(&mut self, client: u64, cid: u64, x: Question) {
+        let Some(hash) = self.backend.request_hash(&x) else {
+            self.send(client, cid, Status::BadRequest);
             self.log(json!({"result":"bad_request","reason":"request"}));
             return;
         };
         let start = self.now();
         match self.core.admit(start, self.server.is_some()) {
             Admission::Admitted(seq) => {
-                let msg = self.wire.encode(&Message::Forward(seq, x.clone()));
+                let msg = self.backend.forward(seq, &x);
                 self.requests.insert(
                     seq,
                     Request {
@@ -169,8 +295,8 @@ impl Endpoint {
                 );
                 if let Some(s) = self.server.as_mut() {
                     let failed = match msg {
-                        Ok(ref m) => s.send(m).is_err(),
-                        Err(_) => true,
+                        Some(ref m) => s.send(m).is_err(),
+                        None => true,
                     };
                     if failed {
                         self.disconnect("lost");
@@ -182,12 +308,12 @@ impl Endpoint {
                 self.changed();
             }
             other => {
-                self.send(client, cid, Reply::Unavailable);
+                self.send(client, cid, Status::Unavailable);
                 self.log(json!({"result":if other == Admission::Halted {"halted"} else {"busy"},"x_sha256":hash}));
             }
         }
     }
-    fn answer(&mut self, seq: u64, outputs: Vec<[u8; 32]>, proof: Vec<u8>) {
+    fn answer(&mut self, seq: u64, body: Body) {
         match self.core.answer(seq) {
             // An honest server sends at most one late answer per request; more would flood the log.
             Answer::Stale | Answer::Duplicate if self.unexpected >= self.core.issued() => {
@@ -206,21 +332,25 @@ impl Endpoint {
                 let Some(p) = self.requests.get_mut(&seq) else {
                     return;
                 };
-                match self
-                    .bundle
-                    .spec
-                    .bind(&p.x, &outputs, &proof, self.config.proof_bytes)
-                {
-                    Ok((data, y)) => {
-                        p.y = Some(y);
-                        self.jobs.push_back(Job { seq, data });
+                let bound = match (&self.backend, &p.x, body) {
+                    (Backend::Ezkl { bundle, .. }, Question::Floats(x), Body::Ezkl(outputs, proof)) => bundle
+                        .spec
+                        .bind(x, &outputs, &proof, self.config.proof_bytes)
+                        .map(|(data, y)| (Work::Ezkl(data), Proven::Floats(y)))
+                        .map_err(|e| if e == "proof_length" { "proof_length" } else { "binding" }),
+                    (Backend::Flashprove { fp, .. }, Question::Tokens(prompt), Body::Tokens(reply, proof)) => {
+                        pge_flashprove::build(&fp.setup.pins, prompt, &reply)
+                            .map(|st| (Work::Flashprove(st, proof), Proven::Tokens(reply)))
+                            .map_err(|_| "binding")
                     }
-                    Err(e) => {
-                        let reason = if e == "proof_length" {
-                            "proof_length"
-                        } else {
-                            "binding"
-                        };
+                    _ => Err("binding"),
+                };
+                match bound {
+                    Ok((work, y)) => {
+                        p.y = Some(y);
+                        self.jobs.push_back(Job { seq, work });
+                    }
+                    Err(reason) => {
                         self.core
                             .complete(seq, self.now(), Decision::failure("reject", reason));
                         self.changed();
@@ -235,6 +365,7 @@ impl Endpoint {
         self.changed();
     }
     fn read_server(&mut self) {
+        let limit = self.backend.answer_max();
         for _ in 0..32 {
             let Some(s) = self.server.as_mut() else {
                 break;
@@ -249,12 +380,12 @@ impl Endpoint {
             let input = if expired {
                 Input::Invalid
             } else {
-                s.read(self.wire.answer_max)
+                s.read(limit)
             };
             match input {
-                Input::Frame(raw) => match self.wire.parse(3, &raw) {
-                    Ok(Message::Answer(seq, outputs, proof)) => self.answer(seq, outputs, proof),
-                    _ => {
+                Input::Frame(raw) => match self.backend.parse_answer(&raw) {
+                    Some((seq, body)) => self.answer(seq, body),
+                    None => {
                         self.log(json!({"result":"server_violation"}));
                         self.disconnect("violation");
                         break;
@@ -309,11 +440,11 @@ impl Endpoint {
                 if c.conn.buffered > 65536 {
                     break;
                 }
-                match c.conn.read(self.wire.request_size) {
+                match c.conn.read(self.backend.request_size()) {
                     Input::Frame(raw) => {
-                        let parsed = self.wire.parse(1, &raw);
+                        let parsed = self.backend.parse_request(&raw);
                         let reason = match parsed {
-                            Ok(Message::Request(cid, x)) => {
+                            Some((cid, x)) => {
                                 if c.last.is_some_and(|last| cid <= last) {
                                     Some("ids")
                                 } else {
@@ -324,7 +455,7 @@ impl Endpoint {
                                     None
                                 }
                             }
-                            _ => Some("protocol"),
+                            None => Some("protocol"),
                         };
                         if let Some(reason) = reason {
                             self.clients.remove(&id);
@@ -358,6 +489,16 @@ impl Endpoint {
 
 pub fn run(mut config: Config) -> Result<(), String> {
     let source = config.source.clone();
+    if let Some(files) = config.flashprove.clone() {
+        let Source::Pinned { bundle, pins, .. } = &source else {
+            return Err("the FlashProve backend needs --bundle and --pins".into());
+        };
+        let fp = Flashprove::load(bundle, pins, &files.verifier, &files.jobs)?;
+        let p = &fp.setup.pins;
+        let wire = TokenWire::new(p.prompt_len, p.reply_len, fp.setup.proof_max)
+            .map_err(|_| "token wire")?;
+        return serve(config, Backend::Flashprove { fp: Arc::new(fp), wire }, None);
+    }
     // In store mode the store's lock is held until the endpoint exits, so no install can overlap.
     let (bundle, domain, version, _store_lock) = match &source {
         Source::Pinned {
@@ -400,6 +541,10 @@ pub fn run(mut config: Config) -> Result<(), String> {
     };
     let bundle = Arc::new(bundle);
     let wire = bundle.spec.wire().map_err(str::to_owned)?;
+    serve(config, Backend::Ezkl { bundle, domain, wire }, version)
+}
+
+fn serve(config: Config, backend: Backend, version: Option<u64>) -> Result<(), String> {
     let log: Box<dyn Write> = match &config.log {
         Some(p) => Box::new(
             OpenOptions::new()
@@ -416,9 +561,7 @@ pub fn run(mut config: Config) -> Result<(), String> {
     let mut endpoint = Endpoint {
         core: Core::new(config.policy),
         config,
-        bundle,
-        domain,
-        wire,
+        backend,
         clock: Instant::now(),
         log,
         log_errors: 0,
@@ -533,7 +676,7 @@ pub fn run(mut config: Config) -> Result<(), String> {
         if !active {
             while let Some(job) = endpoint.jobs.pop_front() {
                 if let Some(left) = endpoint.core.budget(job.seq, endpoint.now()) {
-                    let bundle = Arc::clone(&endpoint.bundle);
+                    let checker = endpoint.backend.checker();
                     let tx = done_tx.clone();
                     let wake = Arc::clone(&wake_tx);
                     let len = endpoint.config.proof_bytes;
@@ -544,9 +687,15 @@ pub fn run(mut config: Config) -> Result<(), String> {
                         // experiment that asked for it, so it counts as a verifier error.
                         let verdict = match &cpus {
                             Some(cpus) if crate::process::pin(cpus).is_err() => Verdict::Error,
-                            _ => {
-                                crate::verify_job(bundle, job.data, Duration::from_nanos(left), len)
-                            }
+                            _ => match (checker, job.work) {
+                                (Checker::Ezkl(bundle), Work::Ezkl(data)) => {
+                                    crate::verify_job(bundle, data, Duration::from_nanos(left), len)
+                                }
+                                (Checker::Flashprove(fp), Work::Flashprove(st, proof)) => {
+                                    fp.check(job.seq, &st, &proof, Duration::from_nanos(left))
+                                }
+                                _ => Verdict::Error,
+                            },
                         };
                         let _ = tx.send((job.seq, verdict));
                         let _ = (&*wake).write(&[1]);

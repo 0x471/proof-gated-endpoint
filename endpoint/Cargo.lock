@@ -1090,6 +1090,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "pge-core",
+ "pge-flashprove",
  "pge-update",
  "pge-verify",
  "pge-wire",
