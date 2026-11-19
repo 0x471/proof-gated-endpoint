@@ -157,3 +157,23 @@ fn token_and_ezkl_frames_never_cross() {
         }
     }
 }
+
+#[test]
+fn shared_vectors_with_the_python_side() {
+    // tests/test_tokens.py checks the same bytes against pge/tokens.py.
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let t = TokenWire::new(2, 1, 16).unwrap();
+    let cases = [
+        (TokenMessage::Request(7, vec![1, 0x0102_0304]), "0500000000000000070000000101020304"),
+        (TokenMessage::Answer(7, vec![511], vec![0xab, 0xcd]), "070000000000000007000001ffabcd"),
+        (TokenMessage::Reply(7, TokenReply::Ok(vec![511])), "08000000000000000700000001ff"),
+        (TokenMessage::Reply(7, TokenReply::Unavailable), "0800000000000000070200000000"),
+        (TokenMessage::Reply(7, TokenReply::BadRequest), "0800000000000000070100000000"),
+    ];
+    for (message, want) in cases {
+        let raw = t.encode(&message).unwrap();
+        assert_eq!(hex(&raw), want);
+        assert_eq!(t.parse(raw[0], &raw).unwrap(), message);
+    }
+    assert_eq!((t.request_size, t.answer_fixed, t.answer_max, t.reply_size), (17, 13, 29, 14));
+}
