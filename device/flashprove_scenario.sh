@@ -8,7 +8,8 @@
 # examples/accepted-proof); FIXTURE (default ../images/flashprove-test/accepted-proof) is the same
 # directory on this machine; BIN (default ../images/flashprove-test/bin/pge-endpoint) is the binary the
 # Pi must run; PY (default .venv/bin/python) runs the server; this machine on 192.168.2.1, the Pi on 192.168.2.2.
-# DEADLINE (default 10), SPIN_MS (default 5), CAP="W F C", RELEASE_CPU=N and MAX_PENDING (default 8) set
+# DEADLINE (default 10), SPIN_MS (default 5), CAP="W F C", RELEASE_CPU=N, MAX_PENDING (default 8) and
+# CONFINE (landlock, the default, or seccomp-only for the stock Pi kernel, which has no Landlock) set
 # the endpoint. The checkout must be clean; the manifest names its commit, the hashes of what the Pi ran,
 # its CPU speed settings and its temperature and throttling before and after. A run is "ok" only if the
 # client finished, every row arrived, both endpoint logs were copied back and the Pi didn't throttle.
@@ -20,6 +21,7 @@ SPIN_MS="${SPIN_MS:-5}"
 CAP="${CAP:-}"
 RELEASE_CPU="${RELEASE_CPU:-}"
 MAX_PENDING="${MAX_PENDING:-8}"
+CONFINE="${CONFINE:-landlock}"
 BIN="${BIN:-../images/flashprove-test/bin/pge-endpoint}"
 PY="${PY:-.venv/bin/python}"
 FIXTURE="${FIXTURE:-../images/flashprove-test/accepted-proof}"
@@ -33,6 +35,7 @@ num='^(0|[1-9][0-9]*)(\.[0-9]+)?$'
 [[ -z "$CAP" || "$CAP" =~ ^[1-9][0-9]{0,3}\ [0-9]{1,4}\ [1-9][0-9]{0,3}$ ]] || { echo "bad CAP"; exit 2; }
 [[ -z "$RELEASE_CPU" || "$RELEASE_CPU" =~ ^[0-9]$ ]] || { echo "bad RELEASE_CPU"; exit 2; }
 [[ "$MAX_PENDING" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "bad MAX_PENDING"; exit 2; }
+[[ "$CONFINE" =~ ^(landlock|seccomp-only)$ ]] || { echo "bad CONFINE"; exit 2; }
 [[ -z "$(git status --porcelain)" ]] || { echo "$NAME: the checkout has changes; commit them first"; exit 2; }
 [[ -f "$BIN" && -f "$FIXTURE/example.proof" ]] || { echo "$NAME: missing $BIN or $FIXTURE"; exit 1; }
 COMMIT="$(git rev-parse HEAD)"
@@ -63,7 +66,7 @@ ssh -n p01 "ss -ltn | grep -q ':8700 '" && { echo "$NAME: port 8700 still busy";
 for i in $(seq 120); do grep -q listening "$OUT/$NAME.server.log" && break; sleep 0.5; done
 grep -q listening "$OUT/$NAME.server.log" || { echo "$NAME: server did not start"; exit 1; }
 read -r CW CF CC <<< "${CAP:-}"
-LAUNCH="/home/bob/p01-fp/pge-endpoint --listen 192.168.2.2:8700 --server 192.168.2.1:8701 --bundle /home/bob/p01-fp/accepted-proof --pins /home/bob/p01-fp/flashprove_small.pins --backend flashprove --verifier /home/bob/p01-fp/cp_verify --deadline $DEADLINE --spin-ms $SPIN_MS --release $RELEASE --max-pending $MAX_PENDING --log /home/bob/endpoint_$NAME.log${CAP:+ --cap-window $CW --cap-failures $CF --cap-cooldown $CC}${RELEASE_CPU:+ --release-cpu $RELEASE_CPU}"
+LAUNCH="/home/bob/p01-fp/pge-endpoint --listen 192.168.2.2:8700 --server 192.168.2.1:8701 --bundle /home/bob/p01-fp/accepted-proof --pins /home/bob/p01-fp/flashprove_small.pins --backend flashprove --verifier /home/bob/p01-fp/cp_verify --confine $CONFINE --deadline $DEADLINE --spin-ms $SPIN_MS --release $RELEASE --max-pending $MAX_PENDING --log /home/bob/endpoint_$NAME.log${CAP:+ --cap-window $CW --cap-failures $CF --cap-cooldown $CC}${RELEASE_CPU:+ --release-cpu $RELEASE_CPU}"
 ssh -n p01 "rm -f ~/endpoint_$NAME.log ~/endpoint_$NAME.err; nohup $LAUNCH </dev/null >/home/bob/endpoint_$NAME.err 2>&1 &"
 ok=0
 for i in $(seq 40); do
@@ -86,7 +89,7 @@ status=ok
 [[ $rc == 0 && $rows == "$N" && $logs == 0 ]] || status=failed
 [[ "$AFTER" == *"throttled throttled=0x0"* ]] || status=failed
 NAME="$NAME" RELEASE="$RELEASE" N="$N" BATCH="$BATCH" DEADLINE="$DEADLINE" SPIN_MS="$SPIN_MS" CAP="$CAP" \
-RELEASE_CPU="$RELEASE_CPU" MAX_PENDING="$MAX_PENDING" COMMIT="$COMMIT" HERE="$here" STARTED="$STARTED" RC="$rc" ROWS="$rows" \
+RELEASE_CPU="$RELEASE_CPU" MAX_PENDING="$MAX_PENDING" CONFINE="$CONFINE" COMMIT="$COMMIT" HERE="$here" STARTED="$STARTED" RC="$rc" ROWS="$rows" \
 LOGS="$logs" STATUS="$status" PI_FILES="$pi_files" BEFORE="$BEFORE" AFTER="$AFTER" PLATFORM="$PLATFORM" \
   /usr/bin/python3 -I -c '
 import json, os, sys
@@ -94,7 +97,8 @@ e = os.environ
 files = dict(reversed(l.split("  ", 1)) for l in e["PI_FILES"].splitlines() if "  " in l)
 m = {"name": e["NAME"], "endpoint": "rust", "backend": "flashprove", "release": e["RELEASE"], "n": int(e["N"]),
      "batch": int(e["BATCH"]), "deadline": float(e["DEADLINE"]), "spin_ms": float(e["SPIN_MS"]), "cap": e["CAP"],
-     "release_cpu": e["RELEASE_CPU"], "max_pending": int(e["MAX_PENDING"]), "commit": e["COMMIT"],
+     "release_cpu": e["RELEASE_CPU"], "max_pending": int(e["MAX_PENDING"]), "confine": e["CONFINE"],
+     "commit": e["COMMIT"],
      "endpoint_sha256": e["HERE"], "pi_sha256": files, "platform": e["PLATFORM"].splitlines(),
      "pi_before": e["BEFORE"].splitlines(), "pi_after": e["AFTER"].splitlines(), "started": e["STARTED"],
      "client_exit": int(e["RC"]), "rows": int(e["ROWS"]), "logs_copied": e["LOGS"] == "0",

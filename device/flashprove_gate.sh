@@ -5,11 +5,14 @@
 # The stored proof must pass and be released no earlier than the deadline; a changed first or last
 # reply token or a flipped proof bit must give unavailable; a deadline shorter than one check must give
 # unavailable and leave no cp_verify running and no job directory; with RELEASE_CPU=0 no cp_verify may
-# run on CPU 0; the failure code must read back with the cap off. Prints one line per check.
+# run on CPU 0, and every sampled cp_verify must run with no-new-privileges and a seccomp filter; the
+# endpoint must log the confinement it was given (CONFINE, default landlock; seccomp-only on the stock
+# Pi kernel); the failure code must read back with the cap off. Prints one line per check.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export OUT="${OUT:-runs/fp_gate_$(date -u +%Y%m%dT%H%M%SZ)}"
 export DEADLINE="${DEADLINE:-10}"
+export CONFINE="${CONFINE:-landlock}"
 mkdir -p "$OUT"
 fails=0
 check() {
@@ -35,6 +38,10 @@ PY
 scenario() { device/flashprove_scenario.sh "$@" || { echo "FAIL $1 (run)"; fails=$((fails + 1)); }; }
 
 scenario fp_gate_honest fixed 4 1 -- --mode honest && check fp_gate_honest pass
+if /usr/bin/python3 -I -c 'import json, sys; first = json.loads(open(sys.argv[1]).readline())
+sys.exit(first != {"result": "start", "confine": sys.argv[2]})' "$OUT/fp_gate_honest.endpoint.jsonl" "$CONFINE"; then
+  echo "PASS endpoint logged confine=$CONFINE"
+else echo "FAIL endpoint confinement record"; fails=$((fails + 1)); fi
 for mode in tamper_output tamper_last flip_proof; do
   scenario "fp_gate_$mode" fixed 2 1 -- --mode "$mode" && check "fp_gate_$mode" refused
 done
@@ -42,14 +49,16 @@ DEADLINE=2 scenario fp_gate_short fixed 2 1 -- --mode honest && DEADLINE=2 check
 sleep 2
 left="$(ssh -n p01 'pgrep -x cp_verify; ls -d /dev/shm/pge-flashprove-*/job-* 2>/dev/null')"
 if [[ -z "$left" ]]; then echo "PASS nothing left after a killed check"; else echo "FAIL left behind: $left"; fails=$((fails + 1)); fi
-ssh -n p01 'for i in $(seq 300); do for p in $(pgrep -x cp_verify); do grep -h Cpus_allowed_list /proc/$p/status; done; sleep 0.1; done' > "$OUT/fp_gate_cpu.cpus" 2>/dev/null &
+ssh -n p01 'for i in $(seq 300); do for p in $(pgrep -x cp_verify); do grep -h -E "^(NoNewPrivs|Seccomp|Cpus_allowed_list):" /proc/$p/status | tr -s "\t\n" "  "; echo; done; sleep 0.1; done' > "$OUT/fp_gate_cpu.status" 2>/dev/null &
 watcher=$!
 RELEASE_CPU=0 scenario fp_gate_cpu fixed 2 1 -- --mode honest && check fp_gate_cpu pass
 wait "$watcher"
-if [[ -s "$OUT/fp_gate_cpu.cpus" ]] && ! awk '{print $2}' "$OUT/fp_gate_cpu.cpus" | grep -qE '(^|[,-])0([,-]|$)'; then
-  echo "PASS cp_verify kept off CPU 0 ($(sort -u "$OUT/fp_gate_cpu.cpus" | tr '\n' ' '))"
+# Each sample: "NoNewPrivs: 1 Seccomp: 2 Cpus_allowed_list: 1-3"; a process that ended mid-read gives a short line.
+seen="$(awk 'NF == 6' "$OUT/fp_gate_cpu.status" | sort -u | tr '\n' ';')"
+if [[ -n "$seen" ]] && awk 'NF == 6 && ($2 != 1 || $4 != 2 || $6 ~ /(^|[,-])0([,-]|$)/) { bad = 1 } END { exit bad }' "$OUT/fp_gate_cpu.status"; then
+  echo "PASS cp_verify off CPU 0, no-new-privileges, seccomp filter ($seen)"
 else
-  echo "FAIL cp_verify CPU placement ($(sort -u "$OUT/fp_gate_cpu.cpus" | tr '\n' ' '))"; fails=$((fails + 1))
+  echo "FAIL cp_verify placement or confinement ($seen)"; fails=$((fails + 1))
 fi
 scenario fp_gate_fail fixed 8 1 -- --mode fail_position --batch 2 --bits 1011 && check fp_gate_fail bits=1011
 echo "gate: $fails failed checks; files in $OUT"
