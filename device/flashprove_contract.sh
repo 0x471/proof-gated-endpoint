@@ -12,6 +12,7 @@ V=$(readlink -f "$1") EX=$(readlink -f "$2") OUT=$3
 ID=$(tr -d '\n' < "$EX/ID.txt")
 [[ "$ID" =~ ^[0-9a-f]{64}$ ]] || { echo "bad ID.txt"; exit 2; }
 rm -rf "$OUT" && mkdir -p "$OUT/in" "$OUT/res" && cd "$OUT" || exit 2
+OUT=$PWD
 {
   echo "== machine"; uname -a; grep -E '^(PRETTY_NAME|VERSION)=' /etc/os-release; ldd --version | head -1; nproc
   grep -m1 -E 'Model|model name' /proc/cpuinfo; free -m | head -2
@@ -20,8 +21,8 @@ rm -rf "$OUT" && mkdir -p "$OUT/in" "$OUT/res" && cd "$OUT" || exit 2
   sha256sum "$V"; echo "id $ID"
 } > info.txt 2>&1
 
-cp "$EX/example.req" "$EX/example.y" "$EX/example.proof" in/
-python3 -I - "$OUT/in" <<'PY'
+cp "$EX/example.req" "$EX/example.y" "$EX/example.proof" in/ || exit 2
+python3 -I - "$OUT/in" <<'PY' || { echo "could not write the changed inputs"; exit 2; }
 import struct, sys
 d = sys.argv[1]
 req = open(f"{d}/example.req", "rb").read()
@@ -46,8 +47,8 @@ w("proof_half", proof[:n // 2])
 w("proof_empty", b"")
 w("proof_append1", proof + b"\0")
 PY
-for part in key leaf kl; do cp -r "$EX/config" "in/config_$part"; cp -r "$EX/ivk" "in/ivk_$part"; done
-python3 -I - "$OUT/in" <<'PY'
+for part in key leaf kl; do cp -r "$EX/config" "in/config_$part" && cp -r "$EX/ivk" "in/ivk_$part" || exit 2; done
+python3 -I - "$OUT/in" <<'PY' || { echo "could not write the changed bundle files"; exit 2; }
 import sys
 d = sys.argv[1]
 for path in ("ivk_key/key.bin", "ivk_leaf/leaf/0.bin", "config_kl/KL.bin"):
