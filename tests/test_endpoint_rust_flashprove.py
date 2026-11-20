@@ -28,7 +28,7 @@ from prover.server import Replay, Server
 
 sys.path.insert(0, str(ROOT / "observer"))
 from cap_model import START, step  # noqa: E402
-from client import decode_failure_position, trace  # noqa: E402
+from client import decode_failure_position, trace, trace_batches  # noqa: E402
 
 PINS = ROOT / "device" / "flashprove_small.pins"
 DEADLINE = float(os.environ.get("PGE_FP_DEADLINE", "3"))
@@ -72,7 +72,7 @@ def endpoint_args(binary, verifier, fixture, port, sport, jobs, log, deadline, e
 
 
 async def run_endpoint(binary, flashprove, work, prover=None, mode="honest", n=2, prompts=None,
-                       deadline=DEADLINE, extra=(), during=None, **server_args):
+                       deadline=DEADLINE, extra=(), during=None, client_batch=None, **server_args):
     verifier, fixture = flashprove
     work.mkdir()
     jobs = work / "jobs"
@@ -94,7 +94,10 @@ async def run_endpoint(binary, flashprove, work, prover=None, mode="honest", n=2
         await asyncio.wait_for(connected.wait(), 10)
         await asyncio.sleep(0.5)
         xs = prompts or [replay.prompt] * n
-        task = asyncio.create_task(trace("127.0.0.1", port, xs, tokens=True))
+        if client_batch:
+            task = asyncio.create_task(trace_batches("127.0.0.1", port, xs, client_batch, tokens=True))
+        else:
+            task = asyncio.create_task(trace("127.0.0.1", port, xs, tokens=True))
         if during:
             await during(proc.pid, jobs)
         rows = await asyncio.wait_for(task, 60 + 2 * len(xs) * deadline)
@@ -298,6 +301,49 @@ def test_the_failure_code_reads_back_without_a_cap(rust_bin, flashprove, tmp_pat
     rows, _, _, _ = asyncio.run(run_endpoint(rust_bin, flashprove, tmp_path / "w", mode="fail_position", n=8,
                                              bits="1011", batch=2))
     assert decode_failure_position(rows, 2) == "1011"
+
+
+def test_timing_bits_move_the_answer_not_the_release(rust_bin, flashprove, tmp_path):  # noqa: F811
+    slot, bits = 0.5, "0101"
+    rows, records, _, _ = asyncio.run(run_endpoint(rust_bin, flashprove, tmp_path / "w", mode="timing_bits", n=4,
+                                                   bits=bits, slot=slot))
+    assert all(r["answer"]["ok"] for r in rows)
+    traces = [r["trace"] for r in released(records)]
+    delays = [(t["answer"] - t["admit"]) / 1e9 for t in traces]
+    for bit, d in zip(bits, delays):
+        assert (d >= 0.9 * slot) if bit == "1" else (d < slot / 2), (bits, delays)
+    # Fixed release: every reply still leaves at its admission + deadline, whatever the answer time.
+    assert all(t["target"] <= t["sent"] for t in traces)
+
+
+def test_order_bits_cannot_reorder_the_replies(rust_bin, flashprove, tmp_path):  # noqa: F811
+    # Batch 3 carries 2 bits; "11" picks a permutation other than the admission order.
+    rows, records, _, _ = asyncio.run(run_endpoint(rust_bin, flashprove, tmp_path / "w", mode="order_bits", n=3,
+                                                   client_batch=3, bits="11", batch=3, deadline=2 * DEADLINE))
+    assert [r["id"] for r in rows] == [0, 1, 2] and all(r["answer"]["ok"] for r in rows)
+    traces = sorted((r["trace"] for r in released(records)), key=lambda t: t["cid"])
+    answered = [t["cid"] for t in sorted(traces, key=lambda t: t["answer"])]
+    assert answered != [0, 1, 2], answered
+    # Checks run in answer-arrival order, releases in admission order.
+    assert [t["cid"] for t in sorted(traces, key=lambda t: t["check_start"])] == answered
+    assert [t["cid"] for t in sorted(traces, key=lambda t: t["sent"])] == [0, 1, 2]
+
+
+@pytest.mark.parametrize("mode", ["drop", "delay"])
+def test_a_withheld_or_late_answer_fails_at_the_deadline(rust_bin, flashprove, tmp_path, mode):  # noqa: F811
+    rows, records, _, _ = asyncio.run(run_endpoint(rust_bin, flashprove, tmp_path / "w", mode=mode, n=1,
+                                                   delay=DEADLINE + 0.5))
+    assert rows[0]["answer"]["ok"] is False and rows[0]["elapsed_ms"] >= DEADLINE * 1000
+    (rec,) = released(records)
+    assert rec["result"] == "deadline" and rec["trace"]["answer"] is None and rec["trace"]["check_start"] is None
+
+
+def test_a_replayed_answer_passes_for_the_same_statement(rust_bin, flashprove, tmp_path):  # noqa: F811
+    # Every request here is the one stored statement, so the previous answer is valid again: the binding
+    # claims the statement, not fresh computation (docs/FLASHPROVE_BINDING.md, "Not claimed").
+    rows, records, _, _ = asyncio.run(run_endpoint(rust_bin, flashprove, tmp_path / "w", mode="replay", n=2))
+    assert all(r["answer"]["ok"] for r in rows)
+    assert [r["result"] for r in released(records)] == ["accept", "accept"]
 
 
 PROBE = r"""

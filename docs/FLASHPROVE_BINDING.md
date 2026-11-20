@@ -149,7 +149,10 @@ protections:
   release nothing extra; a check past its deadline is killed with its children and leaves no job
   directory; a dead endpoint takes its verifier with it; the verifier runs with the limits above,
   no-new-privileges, a seccomp filter and off the release CPU; logs carry no proof material; the
-  failure cap matches `observer/cap_model.py`. `PGE_FP_CONFINE=seccomp-only` runs all of it in that mode.
+  failure cap matches `observer/cap_model.py`; the experiment modes do what the experiments assume (a timing bit
+  moves the answer but not the release, a chosen answer order changes the check order but not the reply
+  order, withheld and late answers end at the deadline, and a replayed answer passes for the identical
+  statement). `PGE_FP_CONFINE=seccomp-only` runs all of it in that mode.
   With only a C compiler instead of `cp_verify`, a probe checks the confinement itself in both modes:
   without Landlock exactly two of its 26 checks change (other files readable, other programs runnable).
 - `device/flashprove_contract.sh`: the verifier alone on the stored proof and changed copies of it.
