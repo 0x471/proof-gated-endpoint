@@ -78,6 +78,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `observer/client.py` | Sequential, batched, multi-connection or paced questions; reply/time records and decoding. |
 | `observer/relay.py` | Positive control for ordering: passes answers through unchecked, in the server's order. Never an endpoint. |
 | `observer/explore_attacks.py` | Exploratory FlashProve attacks on one Linux machine, each with its control. Not device evidence. |
+| `observer/pilot_summary.py` | Summarises a pilot: check and release times from the trace, client-side decodes, simulated sensitivity. |
 | `observer/by_admission.py` | Order multi-client traces by admission. |
 | `observer/pcap_trace.py` | Extract outside packet details and reply times. |
 | `observer/cap_model.py`, `observer/cap_bound.py`, `observer/cap_check.py` | Cap reference, failure-pattern bound and reply-by-reply comparison. |
@@ -98,6 +99,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `device/flashprove_contract.sh` | What `cp_verify` does with the stored proof and changed copies on this machine. |
 | `device/flashprove_scenario.sh` | One FlashProve scenario: endpoint on the Pi, replay server and observer on the laptop; manifest with hashes, CPU settings and temperature. |
 | `device/flashprove_gate.sh` | The FlashProve integration gate on the Pi. Not a measurement. |
+| `device/flashprove_pilot.sh` | The labelled pilot on the Pi that sets deadline, slot, pacing and sample size. Not a result. |
 | `device/flashprove_small.pins` | Pins for FlashProve's stored small proof. |
 | `device/pi_temp_log.sh` | Logs the Pi's temperature at a fixed interval during a scenario. |
 | `device/verify_on_pi.sh`, `device/check_verifier.sh` | Copy pinned model; time real-tool acceptance and rejection checks. |
