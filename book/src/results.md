@@ -548,6 +548,36 @@ How long would a key take at the bound? The table gives the fewest replies after
 
 The cap limits the rate per reply, not the total. At a busy deployment's traffic, a key's worth of bits fits in seconds at the bound, and several endpoints each with their own cap add up. A real budget has to count over time: a limit on failures per hour or per day, or accounting like Petrie, Muhlhauser and Drotos (2026). This is a model of the counted bound only; timing and logs are separate channels.
 
+## FlashProve on the Pi (19-20 Nov)
+
+The Pi 4's stock Raspberry Pi OS card, the endpoint's FlashProve backend with `--confine seccomp-only` (the stock kernel has no Landlock), and FlashProve's stored small proof replayed by the laptop server over a direct cable. A gate and a pilot, not registered results; they set the parameters of protocols 9-11. Not comparable with the EZKL runs above: other proof system, other card state and another network path.
+
+### Does the endpoint work with a large-proof verifier?
+
+`cp_verify` alone on the Pi (19 Nov, `device/flashprove_contract.sh`): the stored proof passed 18 of 18 runs in 4.98-5.13 s; one earlier run, 3 minutes after boot, took 8.81 s. Every one of 18 kinds of changed input was refused with the same reason as in the VM.
+
+The integration gate (`device/flashprove_gate.sh`, 19 Nov and again on 20 Nov with the build that writes the timing trace): 0 failed checks. Honest answers left at the deadline; a changed first or last token and a flipped proof bit gave `unavailable`; a deadline shorter than one check killed it and left nothing behind; the verifier ran with no-new-privileges and a seccomp filter; the failure code read back with the cap off.
+
+### Pilot (20 Nov, exploratory)
+
+`device/flashprove_pilot.sh`, one boot, fresh random bits per arm, laptop otherwise idle. All arms finished with every reply and no throttling, 42-63 °C. D is the deadline in seconds.
+
+<!-- ANCHOR: flashprove-pilot -->
+| Arm | D | Replies | Endpoint results | Client-side decode |
+|---|---|---|---|---|
+| Honest, sham labels | 10 | 64 | all accepted | held-out 18 of 32, p = 0.30 |
+| Timing code, 1 s slot, fixed release | 10 | 64 | all accepted | held-out 18 of 32, p = 0.30 |
+| Timing code, arrival release (positive control) | 10 | 32 | all accepted | held-out 16 of 16 |
+| Order, batches of 3 | 20 | 24 | all accepted | 0 of 8 batches out of admission order |
+| Order to failure, batches of 2 | 7.5 | 32 | 16 accepted, 16 deadline | 16 of 16 bits |
+| Order to failure, wide deadline (negative control) | 12 | 32 | all accepted | no failures to read |
+| Load near a release (straddle), one request per 7 s | 10 | 33 | all accepted | held-out 6 of 16 |
+<!-- ANCHOR_END: flashprove-pilot -->
+
+From the endpoint's private trace: a check took 5.10-5.24 s; with the 1 s slot, admission to verdict was at most 6.28 s, under the deadline of 10. Release lateness (sent minus target) had a median of 0.065 ms with an idle checker. When a check was running at the release it grew: median 0.24 ms against 0.07 ms in the straddle arm, by bit, and up to 1.8 ms in the order-to-failure arm. The client didn't decode that shift at this size.
+
+Simulated sensitivity of the fixed-release timing test, conditional on the 64 honest replies (resampled in blocks of 8, a held-out decoder, one-sided binomial at α 0.01, 400 runs): power 0.54 at 256 replies and 0.86 at 512 for a 0.2 ms shift; 0.15 and 0.26 for 0.1 ms. At zero shift it flagged 0.75-1 % of runs.
+
 ## What these results don't show
 
 - Generality across devices, networks or loads. Most tests use one sequential client; ordering uses concurrent requests. Protocols 4 and 5 each add one load or several-client run. Packet sizes and TCP behaviour remain unmeasured.
