@@ -28,7 +28,7 @@ from prover.server import Replay, Server
 
 sys.path.insert(0, str(ROOT / "observer"))
 from cap_model import START, step  # noqa: E402
-from client import decode_failure_position, trace, trace_batches  # noqa: E402
+from client import decode_failure_position, trace, trace_batches, trace_paced  # noqa: E402
 
 PINS = ROOT / "device" / "flashprove_small.pins"
 DEADLINE = float(os.environ.get("PGE_FP_DEADLINE", "3"))
@@ -72,13 +72,15 @@ def endpoint_args(binary, verifier, fixture, port, sport, jobs, log, deadline, e
 
 
 async def run_endpoint(binary, flashprove, work, prover=None, mode="honest", n=2, prompts=None,
-                       deadline=DEADLINE, extra=(), during=None, client_batch=None, **server_args):
+                       deadline=DEADLINE, extra=(), during=None, client_batch=None, client_period=None,
+                       **server_args):
     verifier, fixture = flashprove
     work.mkdir()
     jobs = work / "jobs"
     jobs.mkdir()
     replay = prover or Replay(fixture, PINS)
-    server = Server(replay, mode=mode, **server_args)
+    # The server's own idea of the release deadline (load_bits, straddle_bits) is the endpoint's.
+    server = Server(replay, mode=mode, deadline=deadline, **server_args)
     connected = asyncio.Event()
 
     async def handle(reader, writer):
@@ -96,6 +98,8 @@ async def run_endpoint(binary, flashprove, work, prover=None, mode="honest", n=2
         xs = prompts or [replay.prompt] * n
         if client_batch:
             task = asyncio.create_task(trace_batches("127.0.0.1", port, xs, client_batch, tokens=True))
+        elif client_period:
+            task = asyncio.create_task(trace_paced("127.0.0.1", port, xs, client_period * 1000, tokens=True))
         else:
             task = asyncio.create_task(trace("127.0.0.1", port, xs, tokens=True))
         if during:
@@ -337,6 +341,18 @@ def test_a_withheld_or_late_answer_fails_at_the_deadline(rust_bin, flashprove, t
     (rec,) = released(records)
     assert rec["result"] == "deadline" and rec["trace"]["answer"] is None and rec["trace"]["check_start"] is None
 
+
+def test_straddle_bits_land_just_before_or_after_the_previous_release(rust_bin, flashprove, tmp_path):  # noqa: F811
+    # Scaled to the deadline so it holds on a laptop VM (1 s checks) and on the Pi 4 (5 s checks, DEADLINE 10).
+    period, lead, shift, bits = 2 * DEADLINE / 3, 0.1 * DEADLINE, 0.1 * DEADLINE, "10"
+    rows, records, _, _ = asyncio.run(run_endpoint(rust_bin, flashprove, tmp_path / "w", mode="straddle_bits", n=3,
+                                                   client_period=period, bits=bits, period=period, lead=lead,
+                                                   shift=shift))
+    assert all(r["answer"]["ok"] for r in rows)
+    traces = sorted((r["trace"] for r in released(records)), key=lambda t: t["cid"])
+    for k, bit in enumerate(bits, start=1):
+        offset = (traces[k]["answer"] - traces[k - 1]["target"]) / 1e9
+        assert abs(offset - (-lead if bit == "1" else shift)) < 0.1, (k, bit, offset)
 
 def test_a_replayed_answer_passes_for_the_same_statement(rust_bin, flashprove, tmp_path):  # noqa: F811
     # Every request here is the one stored statement, so the previous answer is valid again: the binding

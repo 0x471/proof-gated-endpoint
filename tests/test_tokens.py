@@ -92,3 +92,21 @@ def test_replay_refuses_a_fixture_that_does_not_match_the_pins(fixture, tmp_path
 def test_server_uses_the_token_wire(fixture):
     s = Server(Replay(fixture, PINS), mode="flip_proof")
     assert isinstance(s.wire, TokenWire) and s.wire.request_size == 9 + 4 * 61
+
+
+def test_straddle_bits_sends_just_before_or_after_the_previous_release(fixture):
+    server = Server(Replay(fixture, PINS), mode="straddle_bits", bits="10", period=2.0, deadline=3.0, lead=0.3,
+                    shift=0.4)
+    server.arrived = [100.0, 102.0, 104.0]
+    assert server._straddle_target(1) == pytest.approx(102.7)  # bit 1: 0.3 s before 100 + 3
+    assert server._straddle_target(2) == pytest.approx(105.4)  # bit 0: 0.4 s after 102 + 3
+    server.arrived.append(106.0)
+    assert server._straddle_target(3) == pytest.approx(107.4)  # past the bits: 0
+
+
+@pytest.mark.parametrize("lead,shift", [(1.5, 0.3), (0.3, 2.0), (0, 0.3), (0.3, 0)])
+def test_straddle_bits_refuses_offsets_the_next_request_cant_meet(fixture, lead, shift):
+    # A 1 must leave after request k arrives (lead <= deadline - period); a 0 must leave before the next one.
+    with pytest.raises(ValueError):
+        Server(Replay(fixture, PINS), mode="straddle_bits", period=2.0, deadline=3.0, lead=lead, shift=shift)
+

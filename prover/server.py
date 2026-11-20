@@ -59,7 +59,8 @@ TINY = ROOT / "tests" / "fixtures" / "tiny"
 TINY_SETTINGS_SHA256 = "b4a95fc7c572816034708c4e5c079f0f91f82eb9681cfa069565aacc9887aefd"
 TINY_VK_SHA256 = "34ab48a8ac0946be4faf10d85699ac729adb20ec4c6251da1d1d0d4ea18a4d26"
 MODES = ("honest", "drop", "delay", "tamper_output", "replay", "duplicate", "wrong_seq", "oversize", "garbage",
-         "timing_bits", "order_bits", "fail_position", "load_bits", "flood", "tamper_last", "flip_proof")
+         "timing_bits", "order_bits", "fail_position", "load_bits", "flood", "tamper_last", "flip_proof",
+         "straddle_bits")
 
 
 def bits_per_batch(k: int) -> int:
@@ -156,7 +157,10 @@ class Server:
         self.batch = batch
         if mode == "load_bits" and not (0 < lead and 0 < shift and lead + shift < min(period, deadline)):
             raise ValueError("load_bits needs 0 < lead, 0 < shift and lead + shift < min(period, deadline)")
+        if mode == "straddle_bits" and not (0 < lead <= deadline - period and 0 < shift < period):
+            raise ValueError("straddle_bits needs 0 < lead <= deadline - period and 0 < shift < period")
         self.period, self.deadline, self.lead, self.shift = period, deadline, lead, shift
+        self.arrived: list[float] = []
         self.first: float | None = None
         self.proved: dict[str, tuple] = {}
         self.sent_at: dict[int, float] = {}
@@ -180,10 +184,11 @@ class Server:
                     self.first = loop.time()
                 k = len(self.requests)
                 self.requests.append({"seq": seq, "x": x})
+                self.arrived.append(loop.time())
                 try:
                     # load_bits times its sends to the millisecond, but proving holds the GIL and stalls this
                     # loop for the whole proof; the same question can reuse its proof (K4), so prove it once.
-                    key = json.dumps(x) if self.mode == "load_bits" else None
+                    key = json.dumps(x) if self.mode in ("load_bits", "straddle_bits") else None
                     if key is not None and key in self.proved:
                         outputs, proof = self.proved[key]
                     else:
@@ -203,6 +208,9 @@ class Server:
                 if self.mode == "load_bits" and k > 0:
                     asyncio.create_task(self._send_at(writer, self._load_target(k), seq, outputs, proof))
                     continue
+                if self.mode == "straddle_bits" and k > 0:
+                    asyncio.create_task(self._send_at(writer, self._straddle_target(k), seq, outputs, proof))
+                    continue
                 await self._send(writer, seq, outputs, proof)
                 self.previous = (outputs, proof)
         except (ProtocolError, ConnectionError):
@@ -215,6 +223,14 @@ class Server:
         bit = self.bits[k - 1] if k - 1 < len(self.bits) else "0"
         release = self.first + (k - 1) * self.period + self.deadline
         return release - self.lead - (0 if bit == "1" else self.shift)
+
+    def _straddle_target(self, k: int) -> float:
+        """Loop time to send answer k: `lead` before request k-1's fixed release for a 1, `shift` after it for a
+        0, so the answer's read and check start just before or just after that release. The release is taken as
+        the forward's arrival plus the deadline (the endpoint admits a request a moment before forwarding it)."""
+        bit = self.bits[k - 1] if k - 1 < len(self.bits) else "0"
+        release = self.arrived[k - 1] + self.deadline
+        return release - self.lead if bit == "1" else release + self.shift
 
     async def _send_at(self, writer, target: float, seq: int, outputs: list, proof: bytes) -> None:
         loop = asyncio.get_running_loop()
@@ -288,10 +304,14 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--bits", default="")
     ap.add_argument("--slot", type=float, default=0.2)
     ap.add_argument("--batch", type=int, default=2)
-    ap.add_argument("--period", type=float, default=1.0, help="load_bits: seconds between the observer's requests")
-    ap.add_argument("--deadline", type=float, default=4.0, help="load_bits: the endpoint's fixed release time")
-    ap.add_argument("--lead", type=float, default=0.05)
-    ap.add_argument("--shift", type=float, default=0.5)
+    ap.add_argument("--period", type=float, default=1.0,
+                    help="load_bits, straddle_bits: seconds between the observer's requests")
+    ap.add_argument("--deadline", type=float, default=4.0,
+                    help="load_bits, straddle_bits: the endpoint's fixed release time")
+    ap.add_argument("--lead", type=float, default=0.05,
+                    help="load_bits: send this long before the release; straddle_bits: for a 1, before it")
+    ap.add_argument("--shift", type=float, default=0.5,
+                    help="load_bits: a 0 goes this much earlier; straddle_bits: a 0 goes this long after the release")
     ap.add_argument("--flashprove", help="FlashProve stored-proof directory: answer in the token format")
     ap.add_argument("--pins", help="with --flashprove: the endpoint's FlashProve pins file")
     a = ap.parse_args(argv)
