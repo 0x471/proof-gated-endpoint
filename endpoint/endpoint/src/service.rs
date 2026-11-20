@@ -174,6 +174,10 @@ struct Request {
     hash: String,
     start: u64,
     y: Option<Proven>,
+    // Private diagnostic trace (clock ns): never sent to a client, written only to the log.
+    answered: Option<u64>,
+    check_start: Option<u64>,
+    check_end: Option<u64>,
 }
 struct Job {
     seq: u64,
@@ -240,7 +244,8 @@ impl Endpoint {
                             Status::Unavailable
                         };
                         self.send(p.client, p.cid, reply);
-                        let ms = ((self.now().saturating_sub(p.start)) as f64 / 100_000.)
+                        let sent = self.now();
+                        let ms = ((sent.saturating_sub(p.start)) as f64 / 100_000.)
                             .round_ties_even()
                             / 10.;
                         let mut record =
@@ -248,6 +253,11 @@ impl Endpoint {
                         if !decision.reason.is_empty() {
                             record["reason"] = json!(decision.reason);
                         }
+                        let target = (self.config.policy.mode == Mode::Fixed)
+                            .then(|| p.start.checked_add(self.config.policy.deadline))
+                            .flatten();
+                        record["trace"] = json!({"cid":p.cid,"admit":p.start,"answer":p.answered,
+                            "check_start":p.check_start,"check_end":p.check_end,"target":target,"sent":sent});
                         self.log(record);
                     }
                     self.notice();
@@ -291,6 +301,9 @@ impl Endpoint {
                         hash,
                         start,
                         y: None,
+                        answered: None,
+                        check_start: None,
+                        check_end: None,
                     },
                 );
                 if let Some(s) = self.server.as_mut() {
@@ -329,9 +342,11 @@ impl Endpoint {
                 self.log(json!({"result":"duplicate_answer","seq":seq}));
             }
             Answer::Check => {
+                let now = self.now();
                 let Some(p) = self.requests.get_mut(&seq) else {
                     return;
                 };
+                p.answered = Some(now);
                 let bound = match (&self.backend, &p.x, body) {
                     (Backend::Ezkl { bundle, .. }, Question::Floats(x), Body::Ezkl(outputs, proof)) => bundle
                         .spec
@@ -667,8 +682,11 @@ fn serve(config: Config, backend: Backend, version: Option<u64>) -> Result<(), S
         endpoint.read_clients();
         endpoint.core.expire(endpoint.now());
         endpoint.changed();
-        while let Ok((seq, verdict)) = done_rx.try_recv() {
+        while let Ok((seq, verdict, ended)) = done_rx.try_recv() {
             active = false;
+            if let Some(r) = endpoint.requests.get_mut(&seq) {
+                r.check_end = Some(ended);
+            }
             let decision = match verdict {
                 Verdict::Accept => Decision::accept(),
                 Verdict::Reject => Decision::failure("reject", "proof"),
@@ -686,6 +704,11 @@ fn serve(config: Config, backend: Backend, version: Option<u64>) -> Result<(), S
                     let len = endpoint.config.proof_bytes;
                     let seq = job.seq;
                     let cpus = others.clone();
+                    let clock = endpoint.clock;
+                    let dispatched = endpoint.now();
+                    if let Some(r) = endpoint.requests.get_mut(&seq) {
+                        r.check_start = Some(dispatched);
+                    }
                     let started = thread::Builder::new().spawn(move || {
                         // A checker that couldn't leave the event loop's CPU would break the
                         // experiment that asked for it, so it counts as a verifier error.
@@ -701,7 +724,9 @@ fn serve(config: Config, backend: Backend, version: Option<u64>) -> Result<(), S
                                 _ => Verdict::Error,
                             },
                         };
-                        let _ = tx.send((job.seq, verdict));
+                        // Timed here, not when the event loop notices, so the trace shows the check itself.
+                        let ended = u64::try_from(clock.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                        let _ = tx.send((job.seq, verdict, ended));
                         let _ = (&*wake).write(&[1]);
                     });
                     if started.is_ok() {

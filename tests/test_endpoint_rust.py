@@ -137,7 +137,7 @@ async def exercise(rust, binary, bundle, ezkl, work, mode="honest", release="arr
         if rust:
             assert proc.returncode is None
             records = [json.loads(line) for line in logpath.read_text().splitlines()]
-        clean = [{k: v for k, v in r.items() if k != "ms"} for r in records]
+        clean = [{k: v for k, v in r.items() if k not in ("ms", "trace")} for r in records]
         return replies, clean
     finally:
         for writer in clients:

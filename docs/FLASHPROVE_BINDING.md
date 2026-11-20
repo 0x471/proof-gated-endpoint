@@ -193,7 +193,8 @@ counted failure and part of the honest baseline.
 
 Only the fixed-size reply: the continuation ids or `unavailable`, at the fixed release time. The
 proof, any hash of it, the verifier's output and exit code, and the reader's internal cause never
-leave and are never logged. A compromised prover controls the randomness in a valid proof, so
+leave and are never logged. The log's `trace` (request id and event times, `docs/SERVICE_SPEC.md`
+section 7) is for experiments and stays on the device like the rest of the log. A compromised prover controls the randomness in a valid proof, so
 forwarding proofs would hand it a channel.
 
 ## Out of scope for this binding

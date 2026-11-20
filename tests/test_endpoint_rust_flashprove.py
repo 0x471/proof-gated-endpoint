@@ -33,7 +33,8 @@ from client import decode_failure_position, trace  # noqa: E402
 PINS = ROOT / "device" / "flashprove_small.pins"
 DEADLINE = float(os.environ.get("PGE_FP_DEADLINE", "3"))
 CONFINE = os.environ.get("PGE_FP_CONFINE", "landlock")
-LOG_KEYS = {"ms", "result", "seq", "x_sha256", "reason", "failures", "confine"}
+LOG_KEYS = {"ms", "result", "seq", "x_sha256", "reason", "failures", "confine", "trace"}
+TRACE_KEYS = {"cid", "admit", "answer", "check_start", "check_end", "target", "sent"}
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="the FlashProve backend needs Linux")
 
@@ -124,6 +125,13 @@ def test_the_stored_proof_passes_and_is_released_at_the_deadline(rust_bin, flash
     assert [r["answer"] for r in rows] == [{"id": i, "ok": True, "y": replay.reply} for i in range(3)]
     assert all(r["elapsed_ms"] >= DEADLINE * 1000 for r in rows)
     assert [r["result"] for r in released(records)] == ["accept"] * 3
+    # The private trace: one request per client id, events in order, released at admission + deadline.
+    traces = [r["trace"] for r in released(records)]
+    assert [t["cid"] for t in traces] == [0, 1, 2]
+    for t in traces:
+        assert set(t) == TRACE_KEYS, t
+        assert t["admit"] <= t["answer"] <= t["check_start"] <= t["check_end"] <= t["target"] <= t["sent"], t
+        assert t["target"] - t["admit"] == round(DEADLINE * 1e9), t
     root = next(jobs.iterdir())
     assert sorted(p.name for p in root.iterdir()) == ["config", "cp_verify", "ivk"]
 
