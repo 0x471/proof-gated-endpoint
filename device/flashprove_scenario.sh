@@ -10,7 +10,9 @@
 # Pi must run; PY (default .venv/bin/python) runs the server; this machine on 192.168.2.1, the Pi on 192.168.2.2.
 # DEADLINE (default 10), SPIN_MS (default 5), CAP="W F C", RELEASE_CPU=N, MAX_PENDING (default 8) and
 # CONFINE (landlock, the default, or seccomp-only for the stock Pi kernel, which has no Landlock) set
-# the endpoint. The checkout must be clean; the manifest names its commit, the hashes of what the Pi ran,
+# the endpoint; the server always gets the same --deadline. PERIOD_MS=P sends one request every P ms without
+# waiting (straddle_bits, load_bits), instead of one at a time or in BATCHes. The Pi's temperature is logged
+# every 10 s (device/pi_temp_log.sh) into OUT/NAME.temp.log. The checkout must be clean; the manifest names its commit, the hashes of what the Pi ran,
 # its CPU speed settings and its temperature and throttling before and after. A run is "ok" only if the
 # client finished, every row arrived, both endpoint logs were copied back and the Pi didn't throttle.
 set -uo pipefail
@@ -22,6 +24,7 @@ CAP="${CAP:-}"
 RELEASE_CPU="${RELEASE_CPU:-}"
 MAX_PENDING="${MAX_PENDING:-8}"
 CONFINE="${CONFINE:-landlock}"
+PERIOD_MS="${PERIOD_MS:-}"
 BIN="${BIN:-../images/flashprove-test/bin/pge-endpoint}"
 PY="${PY:-.venv/bin/python}"
 FIXTURE="${FIXTURE:-../images/flashprove-test/accepted-proof}"
@@ -35,6 +38,8 @@ num='^(0|[1-9][0-9]*)(\.[0-9]+)?$'
 [[ -z "$CAP" || "$CAP" =~ ^[1-9][0-9]{0,3}\ [0-9]{1,4}\ [1-9][0-9]{0,3}$ ]] || { echo "bad CAP"; exit 2; }
 [[ -z "$RELEASE_CPU" || "$RELEASE_CPU" =~ ^[0-9]$ ]] || { echo "bad RELEASE_CPU"; exit 2; }
 [[ "$MAX_PENDING" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "bad MAX_PENDING"; exit 2; }
+[[ -z "$PERIOD_MS" || "$PERIOD_MS" =~ $num ]] || { echo "bad PERIOD_MS"; exit 2; }
+[[ -z "$PERIOD_MS" || "$BATCH" == 1 ]] || { echo "PERIOD_MS and BATCH > 1 don't go together"; exit 2; }
 [[ "$CONFINE" =~ ^(landlock|seccomp-only)$ ]] || { echo "bad CONFINE"; exit 2; }
 [[ -z "$(git status --porcelain)" ]] || { echo "$NAME: the checkout has changes; commit them first"; exit 2; }
 [[ -f "$BIN" && -f "$FIXTURE/example.proof" ]] || { echo "$NAME: missing $BIN or $FIXTURE"; exit 1; }
@@ -42,7 +47,7 @@ COMMIT="$(git rev-parse HEAD)"
 STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "$OUT"
 cleanup() {
-  ssh -n p01 "pkill -x pge-endpoint; true"
+  ssh -n p01 "pkill -x pge-endpoint; pkill -f '[p]i_temp_log.sh'; true"
   pkill -f "[p]rover/server.py --listen 192.168.2.1"; sleep 0.5; pkill -9 -f "[p]rover/server.py --listen 192.168.2.1"; true
 }
 cleanup
@@ -62,7 +67,8 @@ pi_state() {
 BEFORE="$(pi_state)"
 PLATFORM="$(ssh -n p01 'uname -a; grep PRETTY_NAME /etc/os-release; ldd --version | head -1; grep -m1 Model /proc/cpuinfo')"
 ssh -n p01 "ss -ltn | grep -q ':8700 '" && { echo "$NAME: port 8700 still busy"; exit 1; }
-"$PY" prover/server.py --listen 192.168.2.1:8701 --flashprove "$FIXTURE" --pins "$PINS" "$@" 2>"$OUT/$NAME.server.log" &
+"$PY" prover/server.py --listen 192.168.2.1:8701 --flashprove "$FIXTURE" --pins "$PINS" "$@" --deadline "$DEADLINE" \
+  2>"$OUT/$NAME.server.log" &
 for i in $(seq 120); do grep -q listening "$OUT/$NAME.server.log" && break; sleep 0.5; done
 grep -q listening "$OUT/$NAME.server.log" || { echo "$NAME: server did not start"; exit 1; }
 read -r CW CF CC <<< "${CAP:-}"
@@ -75,12 +81,17 @@ for i in $(seq 40); do
 done
 [ $ok = 1 ] || { echo "$NAME: endpoint not up"; ssh -n p01 "cat ~/endpoint_$NAME.err" | tail -3; exit 1; }
 PROMPT="$(/usr/bin/python3 -I -c 'import struct, sys; w = struct.unpack("<66I", open(sys.argv[1], "rb").read()); print(list(w[:61]))' "$FIXTURE/example.req")"
-if [ "$BATCH" -gt 1 ]; then B="--batch $BATCH"; else B=""; fi
+if [ "$BATCH" -gt 1 ]; then B="--batch $BATCH"; elif [ -n "$PERIOD_MS" ]; then B="--period-ms $PERIOD_MS"; else B=""; fi
+ssh p01 "cat > ~/pi_temp_log.sh && chmod +x ~/pi_temp_log.sh" < device/pi_temp_log.sh
+ssh -n p01 "rm -f ~/temp_$NAME.log; nohup ~/pi_temp_log.sh ~/temp_$NAME.log </dev/null >/dev/null 2>&1 &"
 limit=$(awk -v n="$N" -v d="$DEADLINE" 'BEGIN { printf "%d", n * (d + 8) + 120 }')
 timeout "$limit" /usr/bin/python3 observer/client.py 192.168.2.2 8700 "$PROMPT" --n "$N" --tokens $B > "$OUT/$NAME.trace.jsonl" 2>"$OUT/$NAME.client.err"
 rc=$?
 rows=$(wc -l < "$OUT/$NAME.trace.jsonl" | tr -d ' ')
 sleep 1
+ssh -n p01 "pkill -f '[p]i_temp_log.sh'; true"
+ssh -n p01 "cat ~/temp_$NAME.log" > "$OUT/$NAME.temp.log" 2>/dev/null || true
+temps=$(wc -l < "$OUT/$NAME.temp.log" 2>/dev/null | tr -d ' ')
 AFTER="$(pi_state)"
 logs=0
 ssh -n p01 "cat ~/endpoint_$NAME.log" > "$OUT/$NAME.endpoint.jsonl" && [[ -s "$OUT/$NAME.endpoint.jsonl" ]] || logs=1
@@ -89,7 +100,7 @@ status=ok
 [[ $rc == 0 && $rows == "$N" && $logs == 0 ]] || status=failed
 [[ "$AFTER" == *"throttled throttled=0x0"* ]] || status=failed
 NAME="$NAME" RELEASE="$RELEASE" N="$N" BATCH="$BATCH" DEADLINE="$DEADLINE" SPIN_MS="$SPIN_MS" CAP="$CAP" \
-RELEASE_CPU="$RELEASE_CPU" MAX_PENDING="$MAX_PENDING" CONFINE="$CONFINE" COMMIT="$COMMIT" HERE="$here" STARTED="$STARTED" RC="$rc" ROWS="$rows" \
+RELEASE_CPU="$RELEASE_CPU" MAX_PENDING="$MAX_PENDING" CONFINE="$CONFINE" PERIOD_MS="$PERIOD_MS" TEMPS="${temps:-0}" COMMIT="$COMMIT" HERE="$here" STARTED="$STARTED" RC="$rc" ROWS="$rows" \
 LOGS="$logs" STATUS="$status" PI_FILES="$pi_files" BEFORE="$BEFORE" AFTER="$AFTER" PLATFORM="$PLATFORM" \
   /usr/bin/python3 -I -c '
 import json, os, sys
@@ -98,6 +109,7 @@ files = dict(reversed(l.split("  ", 1)) for l in e["PI_FILES"].splitlines() if "
 m = {"name": e["NAME"], "endpoint": "rust", "backend": "flashprove", "release": e["RELEASE"], "n": int(e["N"]),
      "batch": int(e["BATCH"]), "deadline": float(e["DEADLINE"]), "spin_ms": float(e["SPIN_MS"]), "cap": e["CAP"],
      "release_cpu": e["RELEASE_CPU"], "max_pending": int(e["MAX_PENDING"]), "confine": e["CONFINE"],
+     "period_ms": e["PERIOD_MS"], "temp_samples": int(e["TEMPS"] or 0),
      "commit": e["COMMIT"],
      "endpoint_sha256": e["HERE"], "pi_sha256": files, "platform": e["PLATFORM"].splitlines(),
      "pi_before": e["BEFORE"].splitlines(), "pi_after": e["AFTER"].splitlines(), "started": e["STARTED"],
