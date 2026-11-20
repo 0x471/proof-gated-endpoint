@@ -64,7 +64,7 @@ def _anchor(name):
 def _documents():
     out = subprocess.run(["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
     skip = {RESULTS, "RULES.md"}
-    return [p for p in out.split() if p not in skip and not p.startswith(("docs/results/", "spike/"))]
+    return [p for p in out.split() if p not in skip and not p.startswith("docs/results/")]
 
 
 def test_measurements_are_written_only_in_results():

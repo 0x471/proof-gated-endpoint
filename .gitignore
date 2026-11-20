@@ -18,11 +18,6 @@ prover/artifacts/
 # ...except the pinned, public verification key used by the tests
 !tests/fixtures/*/vk.key
 
-# Spike build checkouts and outputs
-spike/rust-verifier/.build/
-spike/stwo-verifier/.build/
-spike/stwo-verifier/target/
-
 # Endpoint scenario outputs (device/pi_scenario.sh)
 runs/
 
