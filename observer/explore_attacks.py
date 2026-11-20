@@ -7,7 +7,8 @@ trace explains the mechanism. Needs Linux, PGE_RUST_BIN, PGE_CP_VERIFY and PGE_F
 tests/test_endpoint_rust_flashprove.py, whose harness it reuses.
 
 Usage: python observer/explore_attacks.py [--seed N] [--out FILE] [attack ...]
-Attacks: timing, order, order_failure, straddle (default: all).
+Attacks: timing, order, order_failure, straddle (default: all); defences against order_failure:
+order_failure_pending1 (--max-pending 1) and order_failure_cap (failure cap 8/2/8).
 """
 from __future__ import annotations
 
@@ -121,12 +122,13 @@ def order(rng, deadline, batches=8):
             "endpoint_decoded": endpoint_bits, "relay_agreement": agree(relay_bits), "replies_ok": sum(r["answer"]["ok"] for r in rows)}
 
 
-def order_failure(rng, deadline, batches=16):
+def order_failure(rng, deadline, batches=16, extra=()):
     """Two requests at once and a deadline that fits one check, not two. The single checker takes answers
     in arrival order, so the server's answer order decides which request misses its deadline: reply order
     stays correct, but the failure's position carries the bit."""
     message = bits(rng, batches)
-    rows, records, _, _ = run(mode="order_bits", n=2 * batches, client_batch=2, bits=message, batch=2, deadline=deadline)
+    rows, records, _, _ = run(mode="order_bits", n=2 * batches, client_batch=2, bits=message, batch=2, deadline=deadline,
+                              extra=extra)
     by_id = {r["id"]: r["answer"]["ok"] for r in rows}
     decoded = ""
     for b in range(batches):
@@ -134,7 +136,8 @@ def order_failure(rng, deadline, batches=16):
         # Bit 0 = answers in admission order: the first is checked first and passes, the second misses.
         decoded += "0" if (first_ok and not second_ok) else "1" if (second_ok and not first_ok) else "?"
     results = [r["result"] for r in harness.released(records)]
-    return {"message_bits": batches, "deadline_s": deadline, "decoded": decoded, "agreement":
+    return {"message_bits": batches, "deadline_s": deadline, "endpoint_flags": list(extra), "decoded": decoded,
+            "replies_ok": sum(by_id.values()), "agreement":
             sum(a == b for a, b in zip(decoded, message)) / batches, "results": {k: results.count(k) for k in set(results)}}
 
 
@@ -166,6 +169,11 @@ def main(argv=None):
     for name in a.attacks:
         if name == "order_failure":
             report[name] = order_failure(rng, a.tight)
+        elif name == "order_failure_pending1":
+            report[name] = order_failure(rng, a.tight, extra=("--max-pending", "1"))
+        elif name == "order_failure_cap":
+            report[name] = order_failure(rng, a.tight, extra=("--cap-window", "8", "--cap-failures", "2",
+                                                              "--cap-cooldown", "8"))
         else:
             report[name] = {"timing": timing, "order": order, "straddle": straddle}[name](rng, a.deadline if name != "order" else 2 * a.deadline)
         print(name, json.dumps(report[name]), file=sys.stderr, flush=True)
