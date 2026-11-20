@@ -63,6 +63,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `EXPERIMENT_PROTOCOL.md` | Protocol 1: spin repeat, written before data. |
 | `EXPERIMENT_PROTOCOL_2.md` | Pre-registered protocols 2-5: timing cause, cap/halt, load, clients and packet captures. |
 | `EXPERIMENT_PROTOCOL_3.md`, `_4.md`, `_5.md` | Protocols 6 (several clients), 7 (release loop on its own CPU) and 8 (the frozen image). |
+| `EXPERIMENT_PROTOCOL_6.md` | Protocols 9-11 with FlashProve on the Pi: timing, order and order to failure, load near a release. |
 | `results/` | Complete registered-experiment analysis. |
 
 </details>
@@ -78,6 +79,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `observer/client.py` | Sequential, batched, multi-connection or paced questions; reply/time records and decoding. |
 | `observer/relay.py` | Positive control for ordering: passes answers through unchecked, in the server's order. Never an endpoint. |
 | `observer/explore_attacks.py` | Exploratory FlashProve attacks on one Linux machine, each with its control. Not device evidence. |
+| `observer/join_blocks.py`, `observer/protocol10.py` | Join interleaved blocks for `jitter_test.py`; protocol 10's registered analysis. |
 | `observer/pilot_summary.py` | Summarises a pilot: check and release times from the trace, client-side decodes, simulated sensitivity. |
 | `observer/by_admission.py` | Order multi-client traces by admission. |
 | `observer/pcap_trace.py` | Extract outside packet details and reply times. |
@@ -99,6 +101,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `device/flashprove_contract.sh` | What `cp_verify` does with the stored proof and changed copies on this machine. |
 | `device/flashprove_scenario.sh` | One FlashProve scenario: endpoint on the Pi, replay server and observer on the laptop; manifest with hashes, CPU settings and temperature. |
 | `device/flashprove_gate.sh` | The FlashProve integration gate on the Pi. Not a measurement. |
+| `device/flashprove_protocols.sh` | Runs protocols 9-11 in their registered order, with bits from registered seeds. |
 | `device/flashprove_pilot.sh` | The labelled pilot on the Pi that sets deadline, slot, pacing and sample size. Not a result. |
 | `device/flashprove_small.pins` | Pins for FlashProve's stored small proof. |
 | `device/pi_temp_log.sh` | Logs the Pi's temperature at a fixed interval during a scenario. |
