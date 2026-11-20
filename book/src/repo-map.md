@@ -74,6 +74,7 @@ Start with the directory table. Expand a section to find a specific implementati
 | `observer/jitter_test.py` | Test whether remaining timing follows planted bits. |
 | `observer/estimate.py` | Mutual information in bits per answer, null and interval; synthetic `--selftest`. |
 | `observer/order_experiment.py` | Local ordering experiment. |
+| `observer/relay.py` | Positive control for ordering: passes answers through unchecked, in the server's order. Never an endpoint. |
 
 </details>
 

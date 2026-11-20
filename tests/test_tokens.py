@@ -110,3 +110,30 @@ def test_straddle_bits_refuses_offsets_the_next_request_cant_meet(fixture, lead,
     with pytest.raises(ValueError):
         Server(Replay(fixture, PINS), mode="straddle_bits", period=2.0, deadline=3.0, lead=lead, shift=shift)
 
+
+def test_the_relay_control_passes_the_servers_order_through(fixture):
+    # The ordering positive control: with no endpoint enforcing order, order_bits decodes exactly.
+    import asyncio
+    import sys
+    sys.path.insert(0, str(ROOT / "observer"))
+    import relay
+    from client import decode_order_bits, trace_batches
+
+    async def go():
+        replay = Replay(fixture, PINS)
+        server = Server(replay, mode="order_bits", bits="1101", batch=3)
+        up = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        wire = TokenWire.from_pins(read_pins(PINS.read_text()))
+        front = await relay.start(("127.0.0.1", 0), ("127.0.0.1", up.sockets[0].getsockname()[1]), wire)
+        try:
+            return await asyncio.wait_for(
+                trace_batches("127.0.0.1", front.sockets[0].getsockname()[1], [replay.prompt] * 6, 3, tokens=True), 20)
+        finally:
+            front.close()
+            up.close()
+            server.pool.shutdown(wait=True)
+
+    rows = asyncio.run(go())
+    assert [r["id"] for r in rows] == [1, 2, 0, 3, 5, 4] and all(r["answer"]["ok"] for r in rows)
+    assert decode_order_bits(rows, 3) == "1101"
+
