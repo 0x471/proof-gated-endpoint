@@ -83,3 +83,14 @@ O=runs/p11_<time>   # the same two joins with --drop-last, on p11_S1/S2 and p11_
 ```
 
 ## Notes before the first run
+
+- None were added before the runs.
+
+## Deviations, recorded after the runs (21 Nov)
+
+- **Protocol 10:** a first attempt on 20 Nov was stopped by hand in its first arm and isn't used. The full run on 21 Nov had its own boot. With two arms done, the order and order-to-failure results were computed once for a status check; no rule depends on interim results.
+- **Protocol 10's order positive control** (the relay in the VM) was not run before protocol 10 was analysed, as registered. It's pending; until it runs, the order code's "not detected" rests on the 20 Nov VM relay check, which decoded every bit.
+- **`observer/protocol10.py`** first printed a verdict for the descriptive cap arm and counted its erased pairs as wrong bits. It was fixed before reporting (`acbadde`); the registered verdicts didn't change.
+- **Protocol 9:** a first attempt was stopped after two of five arms and rerun in full on the next boot; the partial arms are kept, unused and unanalysed.
+- **Protocols 9 and 11** shared a boot, because rebooting needs the operator's password.
+- **`observer/trace_lateness.py`**, the registered secondary for protocols 9 and 11, was written after registration and committed before their runs (`c1667fb`).
