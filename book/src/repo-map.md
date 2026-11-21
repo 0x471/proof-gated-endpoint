@@ -80,6 +80,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `observer/relay.py` | Positive control for ordering: passes answers through unchecked, in the server's order. Never an endpoint. |
 | `observer/explore_attacks.py` | Exploratory FlashProve attacks on one Linux machine, each with its control. Not device evidence. |
 | `observer/join_blocks.py`, `observer/protocol10.py` | Join interleaved blocks for `jitter_test.py`; protocol 10's registered analysis. |
+| `observer/trace_lateness.py` | Release lateness by bit from the endpoint's private trace: protocols 9 and 11's secondary analysis. |
 | `observer/pilot_summary.py` | Summarises a pilot: check and release times from the trace, client-side decodes, simulated sensitivity. |
 | `observer/by_admission.py` | Order multi-client traces by admission. |
 | `observer/pcap_trace.py` | Extract outside packet details and reply times. |
