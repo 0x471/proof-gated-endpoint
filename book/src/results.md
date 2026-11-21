@@ -578,6 +578,15 @@ From the endpoint's private trace: a check took 5.10-5.24 s; with the 1 s slot, 
 
 Simulated sensitivity of the fixed-release timing test, conditional on the 64 honest replies (resampled in blocks of 8, a held-out decoder, one-sided binomial at α 0.01, 400 runs): power 0.54 at 256 replies and 0.86 at 512 for a 0.2 ms shift; 0.15 and 0.26 for 0.1 ms. At zero shift it flagged 0.75-1 % of runs.
 
+### The laptop wasn't idle during protocols 9-11 (disclosed after the runs)
+
+The protocols required an idle laptop, which plays both the server and the client. During protocols 10, 9 and 11 it was also generating SP1 zkVM proofs for other work; this came to light after the runs. Its effect shows in the data. In the pilot (idle laptop), no client reply time was more than 5 ms from the median. Here 4-20 replies per 256 were, by up to 70 ms (81 ms in protocol 10's order arm). On the endpoint's clock the server's median answer time was unchanged (about 45 ms), with rare answers up to 150 ms. The straddle server logged 5 sends 10-38 ms late, against margins of a second before and half a second after the release.
+
+What this does and doesn't change:
+- **Order to failure and order:** the load is far too small to change which of two checks runs first, and the endpoint enforces reply order itself.
+- **Load near a release (protocol 11):** the extra noise is independent of the random bits, so it can hide a leak but not create one. The leak was shown anyway, and its mechanism was measured on the endpoint's clock, which the laptop doesn't affect.
+- **Timing (protocol 9):** "not detected" stands, and the endpoint released both kinds of reply at the same time. But the pilot's simulated sensitivity assumed an idle laptop and doesn't apply to these client-side numbers.
+
 ### Timing through fixed release (21 Nov, protocol 9)
 
 Registered before any data. One boot; a positive control, then 512 timing-code replies (1 s slot) and 512 honest replies with the same labels, in blocks ABBA; deadline 10, 5 ms spin. All arms valid, no throttling. A first attempt stopped after two arms was rerun in full and isn't used.
@@ -591,7 +600,7 @@ Registered before any data. One boot; a positive control, then 512 timing-code r
 | Release lateness by bit, endpoint's clock (secondary) | median difference −0.0011 ms, permutation p 0.21 |
 <!-- ANCHOR_END: protocol-9 -->
 
-With the checker idle at the release, the 1 s code left nothing the client could read at 512 replies, and the endpoint released both kinds of reply at the same time. This is not a bound on smaller shifts or other decoders; the pilot's simulated sensitivity above applies.
+With the checker idle at the release, the 1 s code left nothing the client could read at 512 replies, and the endpoint released both kinds of reply at the same time. This is not a bound on smaller shifts or other decoders. The pilot's simulated sensitivity assumed an idle laptop and doesn't apply here (see the note above).
 
 ### Reply order and order to failure (21 Nov, protocol 10)
 
