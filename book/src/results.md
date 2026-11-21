@@ -578,6 +578,52 @@ From the endpoint's private trace: a check took 5.10-5.24 s; with the 1 s slot, 
 
 Simulated sensitivity of the fixed-release timing test, conditional on the 64 honest replies (resampled in blocks of 8, a held-out decoder, one-sided binomial at α 0.01, 400 runs): power 0.54 at 256 replies and 0.86 at 512 for a 0.2 ms shift; 0.15 and 0.26 for 0.1 ms. At zero shift it flagged 0.75-1 % of runs.
 
+### Timing through fixed release (21 Nov, protocol 9)
+
+Registered before any data. One boot; a positive control, then 512 timing-code replies (1 s slot) and 512 honest replies with the same labels, in blocks ABBA; deadline 10, 5 ms spin. All arms valid, no throttling. A first attempt stopped after two arms was rerun in full and isn't used.
+
+<!-- ANCHOR: protocol-9 -->
+| Test | Result |
+|---|---|
+| Positive control, arrival release, 64 replies | held-out errors 0.00 / 0.06: decoded |
+| Timing code through fixed release, 512 replies | held-out errors 0.49 / 0.50, null p 0.55: not detected |
+| Honest replies, same labels (control) | held-out errors 0.54 / 0.55, null p 0.95 |
+| Release lateness by bit, endpoint's clock (secondary) | median difference −0.0011 ms, permutation p 0.21 |
+<!-- ANCHOR_END: protocol-9 -->
+
+With the checker idle at the release, the 1 s code left nothing the client could read at 512 replies, and the endpoint released both kinds of reply at the same time. This is not a bound on smaller shifts or other decoders; the pilot's simulated sensitivity above applies.
+
+### Reply order and order to failure (21 Nov, protocol 10)
+
+Registered in `docs/EXPERIMENT_PROTOCOL_6.md` before any data; one boot, all five arms valid, none repeated, no throttling. An earlier attempt on 20 Nov was stopped by hand in its first arm and doesn't count. D is the deadline in seconds.
+
+<!-- ANCHOR: protocol-10 -->
+| Arm | Requests | Endpoint results | Outcome |
+|---|---|---|---|
+| Order code, batches of 3, D 20 | 192 | all accepted | 0 of 64 batches out of admission order; 64 of 128 bits right, p = 0.54: not detected |
+| Order to failure, batches of 2, D 7.5 | 256 | 128 accepted, 128 deadline | 128 of 128 bits right, p = 2.9 × 10⁻³⁹: leak shown |
+| The same code, D 12 (negative control) | 256 | all accepted | no failures, nothing decoded |
+| Order to failure with the cap (W 8, F 2, C 8) | 256 | 54 accepted, 57 deadline, 145 capped, 19 trips | descriptive: 54 bits decoded, all correct; 74 pairs erased |
+| Honest pairs with `--max-pending 1`, D 10 | 256 | 128 accepted, 128 busy | descriptive: the second of each simultaneous pair turned away |
+<!-- ANCHOR_END: protocol-10 -->
+
+The reply-order invariant held. With two answers waiting and a deadline that fits one check, the server's answer order chose which request failed, every proof valid, at one failed request per bit. A deadline that fits every waiting check gave nothing to read. The cap cut the rate to 54 bits per 256 requests but didn't stop it, and the receiver can see which pairs it erased. One request pending at a time removes the channel, because there is no queue to order, at the cost of turning simultaneous requests away.
+
+### Load near a release (21 Nov, protocol 11)
+
+Registered before any data, on the same boot as protocol 9. One request every 7 seconds; for the straddle code, answer k arrives a second before (bit 1) or half a second after (bit 0) request k−1's release. 512 code bits against 512 honest paced requests with the same labels, blocks ABBA; deadline 10. All arms valid, no throttling.
+
+<!-- ANCHOR: protocol-11 -->
+| Test | Result |
+|---|---|
+| Straddle code, 512 bits | held-out errors 0.43 / 0.36, null p 0.0005: leak shown |
+| Honest paced requests, same labels (control) | held-out errors 0.48 / 0.49, null p 0.35 |
+| Release lateness by bit, endpoint's clock (secondary) | with a check running at the release, median 0.27 ms against 0.06 ms; difference 0.21 ms, permutation p 5 × 10⁻⁵ |
+| The same for the honest control (secondary) | difference 0.004 ms, permutation p 0.023 |
+<!-- ANCHOR_END: protocol-11 -->
+
+A valid answer timed so that its check runs across another request's release delays that release by about 0.2 ms, and a client reading reply times decodes it: 64 % right on the better held-out half, at one request every 7 seconds. Fixed release stops replies leaving early; it doesn't stop a busy device sending a little late. The null p is the smallest value 2000 shuffles can give. The control's secondary p of 0.023 decides nothing and is reported as measured.
+
 ## What these results don't show
 
 - Generality across devices, networks or loads. Most tests use one sequential client; ordering uses concurrent requests. Protocols 4 and 5 each add one load or several-client run. Packet sizes and TCP behaviour remain unmeasured.
