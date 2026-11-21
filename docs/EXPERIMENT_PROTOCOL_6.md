@@ -94,3 +94,4 @@ O=runs/p11_<time>   # the same two joins with --drop-last, on p11_S1/S2 and p11_
 - **Protocol 9:** a first attempt was stopped after two of five arms and rerun in full on the next boot; the partial arms are kept, unused and unanalysed.
 - **Protocols 9 and 11** shared a boot, because rebooting needs the operator's password.
 - **`observer/trace_lateness.py`**, the registered secondary for protocols 9 and 11, was written after registration and committed before their runs (`c1667fb`).
+- **The laptop wasn't idle** during protocols 10, 9 and 11: it was also generating SP1 zkVM proofs for other work, disclosed after the runs. Its effect on each result is assessed in `book/src/results.md`, "The laptop wasn't idle during protocols 9-11". Protocol 9's client-side sensitivity no longer rests on the pilot's estimate.
