@@ -3,8 +3,10 @@
 Usage: python observer/protocol10.py OUT
 Reads OUT/NAME.trace.jsonl, OUT/NAME.bits and OUT/NAME.endpoint.jsonl for the arms below and prints one
 JSON object. Every decoder uses only what the client saw. Under no leak each decoded bit matches a fair,
-independent random bit with probability 1/2, so the count of matching bits is Binomial(n, 1/2); a "?" (no
-single failure in a pair, or a batch out of shape) counts as a miss.
+independent random bit with probability 1/2, so the count of matching bits is Binomial(n, 1/2); for the
+registered tests a "?" (no single failure in a pair, or a batch out of shape) counts as a miss. Only the
+registered arms get a verdict (the order code and p10_orderfail); the wide control and the cap arm are
+descriptive, so they report decoded, correct and erased bits, the "?" pairs the receiver can see were lost.
 """
 from __future__ import annotations
 
@@ -31,15 +33,18 @@ def order_result(rows: list[dict], bits: str, batch: int = 3) -> dict:
             "decoded_right": right, "bits": len(bits), "p": p, "verdict": verdict(p)}
 
 
-def orderfail_result(rows: list[dict], bits: str) -> dict:
+def orderfail_result(rows: list[dict], bits: str, registered: bool = True) -> dict:
     """Pairs of requests: bit 0 when the first of the pair alone is ok, 1 when the second alone is."""
     ok = {r["id"]: r["answer"]["ok"] for r in rows}
     dec = "".join("0" if ok.get(2 * k) and not ok.get(2 * k + 1) else
                   "1" if ok.get(2 * k + 1) and not ok.get(2 * k) else "?" for k in range(len(bits)))
     right = sum(a == b for a, b in zip(dec, bits))
-    p = binom_tail(right, len(bits))
-    return {"replies_ok": sum(ok.values()), "replies": len(rows), "undecodable_pairs": dec.count("?"),
-            "decoded_right": right, "bits": len(bits), "p": p, "verdict": verdict(p)}
+    out = {"replies_ok": sum(ok.values()), "replies": len(rows), "bits": len(bits),
+           "decoded": len(bits) - dec.count("?"), "decoded_right": right, "erased": dec.count("?")}
+    if registered:
+        out["p"] = binom_tail(right, len(bits))
+        out["verdict"] = verdict(out["p"])
+    return out
 
 
 def endpoint_results(path: Path) -> dict:
@@ -57,7 +62,7 @@ def main(argv=None):
     bits = lambda n: (out / f"{n}.bits").read_text().strip()
     report = {"p10_order": order_result(rows("p10_order"), bits("p10_order"))}
     for n in ("p10_orderfail", "p10_orderfail_wide", "p10_orderfail_cap"):
-        report[n] = orderfail_result(rows(n), bits(n))
+        report[n] = orderfail_result(rows(n), bits(n), registered=n == "p10_orderfail")
     for n in ("p10_orderfail", "p10_orderfail_wide", "p10_orderfail_cap", "p10_pending1"):
         report.setdefault(n, {})["endpoint_results"] = endpoint_results(out / f"{n}.endpoint.jsonl")
     p1 = rows("p10_pending1")

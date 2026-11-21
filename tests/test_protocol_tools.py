@@ -45,9 +45,16 @@ def test_orderfail_decodes_which_request_of_each_pair_failed():
     bits = "0110"
     fail = {0: 1, 1: 0, 2: 0, 3: 1}  # bit 0: the second request fails; bit 1: the first fails
     r = orderfail_result(rows(8, ok=lambda i: i % 2 != fail[i // 2]), bits)
-    assert r["decoded_right"] == 4 and r["undecodable_pairs"] == 0
+    assert r["decoded_right"] == r["decoded"] == 4 and r["erased"] == 0 and r["verdict"] == "not detected"
     none_failed = orderfail_result(rows(8), bits)
-    assert none_failed["decoded_right"] == 0 and none_failed["undecodable_pairs"] == 4
+    assert none_failed["decoded_right"] == 0 and none_failed["erased"] == 4
+
+
+def test_descriptive_arms_get_no_verdict_and_keep_erasures_apart():
+    fail = {0: 1, 1: 0, 2: 0, 3: 1}
+    # pairs 2 and 3 erased (both requests failed), pairs 0 and 1 decoded correctly
+    r = orderfail_result(rows(8, ok=lambda i: i < 4 and i % 2 != fail[i // 2]), "0110", registered=False)
+    assert (r["decoded"], r["decoded_right"], r["erased"]) == (2, 2, 2) and "verdict" not in r and "p" not in r
 
 
 def test_verdict_follows_the_registered_rule():
