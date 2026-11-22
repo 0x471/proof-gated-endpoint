@@ -51,7 +51,8 @@ fails=0
 while read -r name release n batch deadline period cap pending seed nbits skip args; do
   [[ -z "${ARMS:-}" || " $ARMS " == *" $name "* ]] || continue
   if compgen -G "$OUT/$name.*" >/dev/null; then
-    old="$OUT/attempt_$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$old"; mv "$OUT/$name".* "$old/"
+    old=$(mktemp -d "$OUT/attempt_$(date -u +%Y%m%dT%H%M%SZ)_XXXXXX") || exit 1
+    mv "$OUT/$name".* "$old/" || exit 1
   fi
   b=$(bits "$seed" "$nbits" "$skip"); echo "$b" > "$OUT/$name.bits"
   export DEADLINE="$deadline" MAX_PENDING="$pending"

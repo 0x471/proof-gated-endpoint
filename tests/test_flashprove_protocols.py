@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 import subprocess
 
 import pytest
@@ -36,3 +35,22 @@ def test_protocol_runner_keeps_registered_order_when_child_reads_stdin(tmp_path)
     assert result.returncode == 0, result.stderr
     assert (out / "calls").read_text().splitlines() == ["p10_order", "p10_pending1"]
     assert len((out / "p10_order.bits").read_text().strip()) == 128
+
+
+def test_protocol_repeats_preserve_attempts_with_the_same_timestamp(tmp_path):
+    script = runner(tmp_path)
+    out = tmp_path / "out"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    date = bin_dir / "date"
+    date.write_text('#!/usr/bin/env bash\nprintf "20261121T151043Z\\n"\n')
+    date.chmod(0o755)
+    env = {**os.environ, "OUT": str(out), "ARMS": "p10_order", "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    for text in ["first", "second", "current"]:
+        result = subprocess.run(["bash", str(script), "10"], env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        (out / "p10_order.trace.jsonl").write_text(text)
+    attempts = list(out.glob("attempt_*"))
+    assert len(attempts) == 2
+    assert {(p / "p10_order.trace.jsonl").read_text() for p in attempts} == {"first", "second"}
+    assert (out / "p10_order.trace.jsonl").read_text() == "current"
