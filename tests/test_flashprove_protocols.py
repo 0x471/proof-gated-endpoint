@@ -26,11 +26,12 @@ def test_protocol_runner_refuses_unknown_or_empty_arm_selection(tmp_path, arms):
     assert result.returncode == 2 and not (out / "calls").exists()
 
 
-def test_protocol_runner_keeps_registered_order_when_child_reads_stdin(tmp_path):
+@pytest.mark.parametrize("arms", ["p10_pending1 p10_order", "p10_pending1\tp10_order", "p10_pending1\np10_order"])
+def test_protocol_runner_keeps_registered_order_when_child_reads_stdin(tmp_path, arms):
     script = runner(tmp_path)
     out = tmp_path / "out"
     result = subprocess.run(["bash", str(script), "10"],
-                            env={**os.environ, "OUT": str(out), "ARMS": "p10_pending1 p10_order"},
+                            env={**os.environ, "OUT": str(out), "ARMS": arms},
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert (out / "calls").read_text().splitlines() == ["p10_order", "p10_pending1"]

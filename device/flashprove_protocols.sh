@@ -40,11 +40,14 @@ if [[ -n "${ARMS:-}" ]]; then
   available=" "
   while read -r name rest; do available+="$name "; done <<< "$PLAN"
   selected=0
+  selected_names=" "
   for name in $ARMS; do
     [[ "$available" == *" $name "* ]] || { echo "unknown arm for protocol $P: $name"; exit 2; }
     selected=$((selected + 1))
+    selected_names+="$name "
   done
   [[ $selected -gt 0 ]] || { echo "ARMS selects no arms"; exit 2; }
+  ARMS="$selected_names"
 fi
 
 fails=0
