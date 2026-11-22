@@ -5,7 +5,7 @@
 # each arm's bits come from its registered seed (Python's random.Random(seed), one choice of "0"/"1" per bit)
 # and are written to OUT/NAME.bits before the arm starts. Honest arms get their paired code arm's bits as
 # sham labels. ARMS="name ..." runs only those arms (to repeat a failed arm in full, into the same OUT); an
-# earlier attempt's files are moved to OUT/attempt_<UTC time>/ first, never overwritten. Stops at the first
+# earlier attempt's files are moved to OUT/attempt_<UTC time>_<random>/ first, never overwritten. Stops at the first
 # failed arm.
 set -uo pipefail
 cd "$(dirname "$0")/.."
