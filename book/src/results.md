@@ -548,9 +548,9 @@ How long would a key take at the bound? The table gives the fewest replies after
 
 The cap limits the rate per reply, not the total. At a busy deployment's traffic, a key's worth of bits fits in seconds at the bound, and several endpoints each with their own cap add up. A real budget has to count over time: a limit on failures per hour or per day, or accounting like Petrie, Muhlhauser and Drotos (2026). This is a model of the counted bound only; timing and logs are separate channels.
 
-## FlashProve on the Pi (19-20 Nov)
+## FlashProve on the Pi (19-21 Nov)
 
-The Pi 4's stock Raspberry Pi OS card, the endpoint's FlashProve backend with `--confine seccomp-only` (the stock kernel has no Landlock), and FlashProve's stored small proof replayed by the laptop server over a direct cable. A gate and a pilot, not registered results; they set the parameters of protocols 9-11. Not comparable with the EZKL runs above: other proof system, other card state and another network path.
+The Pi 4's stock Raspberry Pi OS card, the endpoint's FlashProve backend with `--confine seccomp-only` (the stock kernel has no Landlock), and FlashProve's stored small proof replayed by the laptop server over a direct cable. The gate and the pilot are not registered results; they set the parameters of protocols 9-11, which are reported after them. Not comparable with the EZKL runs above: other proof system, other card state and another network path.
 
 ### Does the endpoint work with a large-proof verifier?
 
