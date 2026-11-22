@@ -23,6 +23,25 @@ def test_lateness_refuses_more_bits_than_released_requests():
         lateness([record(1, 0)], "10")
 
 
+@pytest.mark.parametrize("seqs", [(1, 3), (1, 1), (2, 3)])
+def test_lateness_refuses_missing_or_duplicate_sequences(seqs):
+    with pytest.raises(ValueError):
+        lateness([record(seq, 0) for seq in seqs], "10")
+
+
+@pytest.mark.parametrize("bits", ["", "1x"])
+def test_lateness_refuses_invalid_labels(bits):
+    with pytest.raises(ValueError):
+        lateness([record(1, 0), record(2, 0)], bits)
+
+
+def test_lateness_refuses_a_sequence_for_the_wrong_client_request():
+    r = record(1, 0)
+    r["trace"]["cid"] = 1
+    with pytest.raises(ValueError):
+        lateness([r], "1")
+
+
 def test_records_without_a_release_target_are_left_out():
     records = [record(1, 0), {"seq": 2, "result": "accept", "trace": {"target": None, "sent": 5}}]
     assert lateness(records, "1") == [(0.0, "1")]

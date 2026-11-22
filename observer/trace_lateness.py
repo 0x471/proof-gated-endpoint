@@ -18,8 +18,15 @@ from pathlib import Path
 
 
 def lateness(records: list[dict], bits: str) -> list[tuple[float, str]]:
+    if not bits or set(bits) - {"0", "1"}:
+        raise ValueError("bits must be a non-empty string of 0 and 1")
     released = sorted((r for r in records if "trace" in r and r["trace"].get("target") is not None),
                       key=lambda r: r["seq"])
+    for i, r in enumerate(released, 1):
+        if r["seq"] != i:
+            raise ValueError(f"expected released sequence {i}, got {r['seq']}")
+        if "cid" in r["trace"] and r["trace"]["cid"] != i - 1:
+            raise ValueError(f"sequence {i} is not request {i - 1}")
     if len(released) < len(bits):
         raise ValueError(f"{len(released)} released records for {len(bits)} bits")
     return [((r["trace"]["sent"] - r["trace"]["target"]) / 1e6, b) for r, b in zip(released, bits)]
