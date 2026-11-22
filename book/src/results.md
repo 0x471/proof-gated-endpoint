@@ -620,7 +620,7 @@ The reply-order invariant held. With two answers waiting and a deadline that fit
 
 ### Load near a release (21 Nov, protocol 11)
 
-Registered before any data, on the same boot as protocol 9. One request every 7 seconds; for the straddle code, answer k arrives a second before (bit 1) or half a second after (bit 0) request k−1's release. 512 code bits against 512 honest paced requests with the same labels, blocks ABBA; deadline 10. All arms valid, no throttling.
+Registered before any data, on the same boot as protocol 9. One request every 7 seconds; for the straddle code, answer k arrives a second before (bit 1) or half a second after (bit 0) request k−1's release. 512 code bits against 512 analyzed honest paced replies with the same labels, blocks ABBA; deadline 10. Each condition ran 514 requests; the terminal reply of each block was excluded. All arms valid, no throttling.
 
 <!-- ANCHOR: protocol-11 -->
 | Test | Result |
@@ -631,7 +631,7 @@ Registered before any data, on the same boot as protocol 9. One request every 7 
 | The same for the honest control (secondary) | difference 0.004 ms, permutation p 0.023 |
 <!-- ANCHOR_END: protocol-11 -->
 
-A valid answer timed so that its check runs across another request's release delays that release by about 0.2 ms, and a client reading reply times decodes it: 64 % right on the better held-out half, at one request every 7 seconds. Fixed release stops replies leaving early; it doesn't stop a busy device sending a little late. The null p is the smallest value 2000 shuffles can give. The control's secondary p of 0.023 decides nothing and is reported as measured.
+In this run, timing valid answers so their checks span another request's release was associated with about 0.2 ms more median release lateness, and a client reading reply times decoded the code: 64 % right on the better held-out half, at one request every 7 seconds. This supports a client-visible effect of the answer schedule; it does not isolate CPU contention as the sole cause. Fixed release stops replies leaving early; it doesn't stop a busy device sending a little late. The primary Monte Carlo p uses the plus-one correction: zero of 2000 shuffled statistics were as extreme. The code arm's endpoint secondary likewise had zero of 20000 as extreme. These are the tests' resolution floors, not exact tail probabilities. The control's secondary p of 0.023 decides nothing and is reported as measured.
 
 ## What these results don't show
 
