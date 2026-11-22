@@ -584,8 +584,8 @@ The protocols required an idle laptop, which plays both the server and the clien
 
 What this does and doesn't change:
 - **Order to failure and order:** the load is far too small to change which of two checks runs first, and the endpoint enforces reply order itself.
-- **Load near a release (protocol 11):** the extra noise is independent of the random bits, so it can hide a leak but not create one. The leak was shown anyway, and its mechanism was measured on the endpoint's clock, which the laptop doesn't affect.
-- **Timing (protocol 9):** "not detected" stands, and the endpoint released both kinds of reply at the same time. But the pilot's simulated sensitivity assumed an idle laptop and doesn't apply to these client-side numbers.
+- **Load near a release (protocol 11):** the registered test detected the code, and the endpoint trace confirms that the answer schedule put checks across the intended releases. The endpoint clock avoids client read delays, but the laptop still schedules server sends and client requests. Unrelated proof work does not establish that the resulting timing noise is independent of the bits; this run does not isolate CPU contention from other effects of the answer schedule and laptop load.
+- **Timing (protocol 9):** "not detected" stands for the registered decoder. The endpoint's secondary test also detected no difference; that does not establish equal release times. The pilot's simulated sensitivity assumed an idle laptop and doesn't apply to these client-side numbers.
 
 ### Timing through fixed release (21 Nov, protocol 9)
 
@@ -600,7 +600,7 @@ Registered before any data. One boot; a positive control, then 512 timing-code r
 | Release lateness by bit, endpoint's clock (secondary) | median difference −0.0011 ms, permutation p 0.21 |
 <!-- ANCHOR_END: protocol-9 -->
 
-With the checker idle at the release, the 1 s code left nothing the client could read at 512 replies, and the endpoint released both kinds of reply at the same time. This is not a bound on smaller shifts or other decoders. The pilot's simulated sensitivity assumed an idle laptop and doesn't apply here (see the note above).
+With the checker idle at the release, the registered decoder did not detect the 1 s code at 512 replies, and the endpoint's secondary test detected no difference in release lateness. Neither result establishes equal timing distributions or bounds smaller shifts or other decoders. The pilot's simulated sensitivity assumed an idle laptop and doesn't apply here (see the note above).
 
 ### Reply order and order to failure (21 Nov, protocol 10)
 
