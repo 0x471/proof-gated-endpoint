@@ -57,3 +57,9 @@ def test_median_difference_and_permutation_p():
     rng = random.Random(1)
     null = [(rng.gauss(0, 1), rng.choice("01")) for _ in range(200)]
     assert permutation_p(null, 2000, random.Random(2)) > 0.01
+
+
+def test_lateness_allows_one_extra_request_but_refuses_a_longer_log():
+    assert len(lateness([record(1, 0), record(2, 0), record(3, 0)], "10")) == 2
+    with pytest.raises(ValueError):
+        lateness([record(i, 0) for i in range(1, 5)], "10")

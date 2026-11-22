@@ -4,8 +4,9 @@ and 11 (docs/EXPERIMENT_PROTOCOL_6.md). It explains a mechanism; it never decide
 Usage: python observer/trace_lateness.py BLOCK.endpoint.jsonl:BLOCK.bits ... [--perms 20000] [--seed 0]
 
 Each block is one endpoint run. Its released records, in sequence order, are its requests in admission order;
-request i carries bit i, and requests past the end of the bits (the straddle code's last request) are left
-out. Lateness is sent minus target, in ms. Reports the median for 1 bits minus the median for 0 bits and a
+request i carries bit i. A block may have one request more than bits (the straddle code's last request, which
+is left out); any other mismatch is refused. The checks assume one sequential or paced client with no busy
+replies, as in protocols 9 and 11: each sequence must be its client's request id plus one. Lateness is sent minus target, in ms. Reports the median for 1 bits minus the median for 0 bits and a
 two-sided permutation p: the bits are shuffled across all requests, the same statistic recomputed.
 """
 from __future__ import annotations
@@ -27,7 +28,7 @@ def lateness(records: list[dict], bits: str) -> list[tuple[float, str]]:
             raise ValueError(f"expected released sequence {i}, got {r['seq']}")
         if "cid" in r["trace"] and r["trace"]["cid"] != i - 1:
             raise ValueError(f"sequence {i} is not request {i - 1}")
-    if len(released) < len(bits):
+    if len(released) not in (len(bits), len(bits) + 1):
         raise ValueError(f"{len(released)} released records for {len(bits)} bits")
     return [((r["trace"]["sent"] - r["trace"]["target"]) / 1e6, b) for r, b in zip(released, bits)]
 
