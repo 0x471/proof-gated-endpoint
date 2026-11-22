@@ -57,5 +57,19 @@ def test_descriptive_arms_get_no_verdict_and_keep_erasures_apart():
     assert (r["decoded"], r["decoded_right"], r["erased"]) == (2, 2, 2) and "verdict" not in r and "p" not in r
 
 
+@pytest.mark.parametrize("bad", [rows(1), [rows(2)[0], rows(2)[0]], rows(3)])
+def test_orderfail_refuses_incomplete_duplicate_or_extra_replies(bad):
+    with pytest.raises(ValueError):
+        orderfail_result(bad, "0")
+
+
+@pytest.mark.parametrize("field,value", [("id", 9), ("ok", None), ("ok", 1)])
+def test_orderfail_refuses_mismatched_reply_ids_or_invalid_status(field, value):
+    bad = rows(2)
+    bad[0]["answer"][field] = value
+    with pytest.raises(ValueError):
+        orderfail_result(bad, "0")
+
+
 def test_verdict_follows_the_registered_rule():
     assert (verdict(0.005), verdict(0.03), verdict(0.2)) == ("leak shown", "inconclusive", "not detected")

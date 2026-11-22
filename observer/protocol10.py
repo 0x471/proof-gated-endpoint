@@ -35,6 +35,12 @@ def order_result(rows: list[dict], bits: str, batch: int = 3) -> dict:
 
 def orderfail_result(rows: list[dict], bits: str, registered: bool = True) -> dict:
     """Pairs of requests: bit 0 when the first of the pair alone is ok, 1 when the second alone is."""
+    if not bits or set(bits) - {"0", "1"}:
+        raise ValueError("bits must be a non-empty string of 0 and 1")
+    if sorted(r["id"] for r in rows) != list(range(2 * len(bits))):
+        raise ValueError("expected exactly one reply for each request in every pair")
+    if any(r["answer"].get("id") != r["id"] or type(r["answer"].get("ok")) is not bool for r in rows):
+        raise ValueError("reply id or status does not match its request")
     ok = {r["id"]: r["answer"]["ok"] for r in rows}
     dec = "".join("0" if ok.get(2 * k) and not ok.get(2 * k + 1) else
                   "1" if ok.get(2 * k + 1) and not ok.get(2 * k) else "?" for k in range(len(bits)))
