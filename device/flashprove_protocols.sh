@@ -36,6 +36,17 @@ p11_H2 fixed 257 1 10 7000 - 8 111 256 256 --mode honest
 p11_S2 fixed 257 1 10 7000 - 8 111 256 256 --mode straddle_bits --bits BITS --period 7 --lead 1 --shift 0.5" ;;
 esac
 
+if [[ -n "${ARMS:-}" ]]; then
+  available=" "
+  while read -r name rest; do available+="$name "; done <<< "$PLAN"
+  selected=0
+  for name in $ARMS; do
+    [[ "$available" == *" $name "* ]] || { echo "unknown arm for protocol $P: $name"; exit 2; }
+    selected=$((selected + 1))
+  done
+  [[ $selected -gt 0 ]] || { echo "ARMS selects no arms"; exit 2; }
+fi
+
 fails=0
 while read -r name release n batch deadline period cap pending seed nbits skip args; do
   [[ -z "${ARMS:-}" || " $ARMS " == *" $name "* ]] || continue
