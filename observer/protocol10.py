@@ -2,9 +2,10 @@
 
 Usage: python observer/protocol10.py OUT
 Reads OUT/NAME.trace.jsonl, OUT/NAME.bits and OUT/NAME.endpoint.jsonl for the arms below and prints one
-JSON object. Every decoder uses only what the client saw. Under no leak each decoded bit matches a fair,
-independent random bit with probability 1/2, so the count of matching bits is Binomial(n, 1/2); for the
-registered tests a "?" (no single failure in a pair, or a batch out of shape) counts as a miss. Only the
+JSON object. Every decoder uses only what the client saw. Under no leak, with guesses independent of fair,
+independent random bits, the count of matches is Binomial(n, 1/2) when there are no erasures. For the
+registered tests a "?" (no single failure in a pair, or a batch out of shape) counts as a miss, making the
+full-n binomial upper tail conservative under the same null. Only the
 registered arms get a verdict (the order code and p10_orderfail); the wide control and the cap arm are
 descriptive, so they report decoded, correct and erased bits, the "?" pairs the receiver can see were lost.
 """
