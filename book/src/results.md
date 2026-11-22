@@ -598,6 +598,8 @@ Registered before any data. One boot; a positive control, then 512 timing-code r
 | Timing code through fixed release, 512 replies | held-out errors 0.49 / 0.50, null p 0.55: not detected |
 | Honest replies, same labels (control) | held-out errors 0.54 / 0.55, null p 0.95 |
 | Release lateness by bit, endpoint's clock (secondary) | median difference −0.0011 ms, permutation p 0.21 |
+| The same for the honest control (secondary) | median difference −0.0002 ms, permutation p 0.66 |
+| Client mean difference by bit (secondary) | code +0.085 ms, p 0.68; honest control +0.150 ms, p 0.74 |
 <!-- ANCHOR_END: protocol-9 -->
 
 With the checker idle at the release, the registered decoder did not detect the 1 s code at 512 replies, and the endpoint's secondary test detected no difference in release lateness. Neither result establishes equal timing distributions or bounds smaller shifts or other decoders. The pilot's simulated sensitivity assumed an idle laptop and doesn't apply here (see the note above).
@@ -629,9 +631,14 @@ Registered before any data, on the same boot as protocol 9. One request every 7 
 | Honest paced requests, same labels (control) | held-out errors 0.48 / 0.49, null p 0.35 |
 | Release lateness by bit, endpoint's clock (secondary) | with a check running at the release, median 0.27 ms against 0.06 ms; difference 0.21 ms, permutation p 5 × 10⁻⁵ |
 | The same for the honest control (secondary) | difference 0.004 ms, permutation p 0.023 |
+| Client mean difference by bit (secondary) | code +0.170 ms, p 0.34; honest control −0.010 ms, p 0.97 |
 <!-- ANCHOR_END: protocol-11 -->
 
 In this run, timing valid answers so their checks span another request's release was associated with about 0.2 ms more median release lateness, and a client reading reply times decoded the code: 64 % right on the better held-out half, at one request every 7 seconds. This supports a client-visible effect of the answer schedule; it does not isolate CPU contention as the sole cause. Fixed release stops replies leaving early; it doesn't stop a busy device sending a little late. The primary Monte Carlo p uses the plus-one correction: zero of 2000 shuffled statistics were as extreme. The code arm's endpoint secondary likewise had zero of 20000 as extreme. These are the tests' resolution floors, not exact tail probabilities. The control's secondary p of 0.023 decides nothing and is reported as measured.
+
+The mean differences are not significant beside a significant primary because a mean is dominated by the few large outliers in each block (see the note on the laptop above); the registered primary is a threshold test. How old the running check is matters too. In the honest control a check was also running at every analysed release, but about 2.9 s into its run, and the median lateness was about 0.1 ms. With the straddle code's 1 bits, the check was about a second old and the median was 0.27 ms; with no check running it was 0.06 ms. So "a running check delays the release" holds for this schedule, not for any running check.
+
+**Exploratory, found after the runs: a second path through admission.** The endpoint stamps a request's admission when its event loop reaches it, and the release target is that stamp plus the deadline. A late admission therefore reaches the client unchanged, and the endpoint's lateness (sent minus target) can't see it. In the straddle code, request k+2 arrives while answer k+1's check is running, and bit k sets how far that check has got. With the labels shifted by two, the client's time minus the endpoint's own admission-to-send time differed by −0.28 ms between the two labels (permutation p below 0.001). Shifts of 0, 1 and 3 showed nothing, nor did the honest arm at a shift of two. The registered client decoder with labels shifted by two gave a null p of 0.003-0.005, depending on whether each block's last requests are kept. The pilot points the same way on far fewer bits. This was found by scanning several label shifts, so it is likely real but not shown; a future protocol should register it. It doesn't change protocol 11's verdict.
 
 ## What these results don't show
 
