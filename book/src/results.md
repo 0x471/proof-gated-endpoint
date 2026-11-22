@@ -576,7 +576,7 @@ The integration gate (`device/flashprove_gate.sh`, 19 Nov and again on 20 Nov wi
 
 From the endpoint's private trace: a check took 5.10-5.24 s; with the 1 s slot, admission to verdict was at most 6.28 s, under the deadline of 10. Release lateness (sent minus target) had a median of 0.065 ms with an idle checker. When a check was running at the release it grew: median 0.24 ms against 0.07 ms in the straddle arm, by bit, and up to 1.8 ms in the order-to-failure arm. The client didn't decode that shift at this size.
 
-Exploratory simulated sensitivity, conditional on the 64 honest replies (resampled in blocks of 8, a threshold set from first-half class means and scored on the second half, one-sided binomial at α 0.01, 400 runs): power 0.54 at 256 replies and 0.86 at 512 for a 0.2 ms shift; 0.15 and 0.26 for 0.1 ms. This uses a different decoder and test from the registered best-threshold, better-half permutation analysis, so it does not calibrate that analysis. A separate zero-shift check was reported as flagging 0.75-1 % of runs, but its output and random state are not in the saved pilot summary, whose grid starts at a 0.01 ms shift.
+Exploratory simulated sensitivity, conditional on the 64 honest replies (resampled in blocks of 8, a threshold set from first-half class means and scored on the second half, one-sided binomial at alpha 0.01, 400 runs): power 0.54 at 256 replies and 0.86 at 512 for a 0.2 ms shift; 0.15 and 0.26 for 0.1 ms. This uses a different decoder and test from the registered best-threshold, better-half permutation analysis, so it does not calibrate that analysis. A separate zero-shift check was reported as flagging 0.75-1 % of runs, but its output and random state are not in the saved pilot summary, whose grid starts at a 0.01 ms shift.
 
 ### The laptop wasn't idle during protocols 9-11 (disclosed after the runs)
 
@@ -620,7 +620,7 @@ The reply-order invariant held. With two answers waiting and a deadline that fit
 
 ### Load near a release (21 Nov, protocol 11)
 
-Registered before any data, on the same boot as protocol 9. One request every 7 seconds; for the straddle code, answer k arrives a second before (bit 1) or half a second after (bit 0) request k−1's release. 512 code bits against 512 analyzed honest paced replies with the same labels, blocks ABBA; deadline 10. Each condition ran 514 requests; the terminal reply of each block was excluded. All arms valid, no throttling.
+Registered before any data, on the same boot as protocol 9. One request every 7 seconds; for the straddle code, answer k arrives a second before (bit 1) or half a second after (bit 0) request k-1's release. 512 code bits against 512 analyzed honest paced replies with the same labels, blocks ABBA; deadline 10. Each condition ran 514 requests; the terminal reply of each block was excluded. All arms valid, no throttling.
 
 <!-- ANCHOR: protocol-11 -->
 | Test | Result |
