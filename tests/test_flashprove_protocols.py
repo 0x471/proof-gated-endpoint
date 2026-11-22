@@ -23,7 +23,7 @@ def test_protocol_runner_refuses_unknown_or_empty_arm_selection(tmp_path, arms):
     out = tmp_path / "out"
     result = subprocess.run(["bash", str(script), "10"], env={**os.environ, "OUT": str(out), "ARMS": arms},
                             capture_output=True, text=True)
-    assert result.returncode == 2 and not (out / "calls").exists()
+    assert result.returncode == 2 and not out.exists()
 
 
 @pytest.mark.parametrize("arms", ["p10_pending1 p10_order", "p10_pending1\tp10_order", "p10_pending1\np10_order"])

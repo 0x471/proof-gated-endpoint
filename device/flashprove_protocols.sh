@@ -13,7 +13,6 @@ P="${1:-}"
 [[ "$P" =~ ^(9|10|11)$ ]] || { echo "usage: device/flashprove_protocols.sh 9|10|11"; exit 2; }
 export OUT="${OUT:-runs/p${P}_$(date -u +%Y%m%dT%H%M%SZ)}"
 export CONFINE="${CONFINE:-landlock}"
-mkdir -p "$OUT"
 bits() { /usr/bin/python3 -I -c 'import random, sys
 r = random.Random(int(sys.argv[1])); n, skip = int(sys.argv[2]), int(sys.argv[3])
 print("".join(r.choice("01") for _ in range(skip + n))[skip:])' "$@"; }
@@ -50,6 +49,7 @@ if [[ -n "${ARMS:-}" ]]; then
   ARMS="$selected_names"
 fi
 
+mkdir -p "$OUT"
 fails=0
 while read -r name release n batch deadline period cap pending seed nbits skip args; do
   [[ -z "${ARMS:-}" || " $ARMS " == *" $name "* ]] || continue
