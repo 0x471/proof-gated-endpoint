@@ -27,6 +27,8 @@ Under arrival-order or fixed release, the endpoint does not pass an answer on ju
 
 So if the server answers B, then A, then C, the endpoint writes A, then B, then C. The same rule holds for failures: an `unavailable` for a rejected answer also waits its turn. Otherwise, its position could reveal the server's chosen order.
 
+Other designs remove the same choice differently. Petrie, Muhlhauser and Drotos (2026) shuffle replies at random within each time bucket (§5.2 and Appendix A); their prototype instead requires strictly increasing packet ids, so order is a function of content ([security architecture](https://github.com/JamesPetrie/interlock/blob/a0481f8822afc4839d1603593c802da8b632823d/docs/security-architecture.md#10-threat-table)). Random order, an order fixed by id and admission order all leave the server nothing to choose.
+
 Requests refused before admission do not wait. These include `bad_request` for invalid inputs and `unavailable` when the queue is full. After a halt, new questions also get `unavailable` immediately; see [Failures](failures.md#capping-versus-stopping).
 
 ## What we found
