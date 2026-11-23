@@ -1,3 +1,4 @@
+import random
 import os
 import subprocess
 
@@ -55,3 +56,62 @@ def test_protocol_repeats_preserve_attempts_with_the_same_timestamp(tmp_path):
     assert len(attempts) == 2
     assert {(p / "p10_order.trace.jsonl").read_text() for p in attempts} == {"first", "second"}
     assert (out / "p10_order.trace.jsonl").read_text() == "current"
+
+
+def env_runner(tmp_path):
+    script = runner(tmp_path)
+    (tmp_path / "device/flashprove_scenario.sh").write_text(
+        '#!/usr/bin/env bash\ncat >/dev/null\n'
+        'printf "%s cpu=%s sample=%s period=%s deadline=%s\\n" "$1" "${RELEASE_CPU-unset}" "${CPU_SAMPLE-unset}" '
+        '"${PERIOD_MS-unset}" "$DEADLINE" >> "$OUT/calls"\n')
+    return script
+
+
+def stream(seed, n, skip):
+    r = random.Random(seed)
+    return "".join(r.choice("01") for _ in range(skip + n))[skip:]
+
+
+def test_protocol_12_runs_six_interleaved_arms_with_registered_cpu_and_bits(tmp_path):
+    script = env_runner(tmp_path)
+    out = tmp_path / "out"
+    result = subprocess.run(["bash", str(script), "12"], env={**os.environ, "OUT": str(out)},
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (out / "calls").read_text().splitlines() == [
+        f"{name} cpu={cpu} sample=1 period=7000 deadline=10" for name, cpu in
+        [("p12_SU1", "unset"), ("p12_SP1", "0"), ("p12_HP", "0"), ("p12_HU", "unset"), ("p12_SP2", "0"),
+         ("p12_SU2", "unset")]]
+    bits = {p.stem: p.read_text().strip() for p in out.glob("p12_*.bits")}
+    assert bits["p12_SU1"] == bits["p12_HU"] == stream(121, 256, 0)
+    assert bits["p12_SU2"] == stream(121, 256, 256)
+    assert bits["p12_SP1"] == bits["p12_HP"] == stream(122, 256, 0)
+    assert bits["p12_SP2"] == stream(122, 256, 256)
+    for name in bits:
+        text = (out / f"{name}.laptop.txt").read_text()
+        assert text.startswith("before ") and "\nafter " in text
+
+
+def test_earlier_protocols_keep_release_cpu_and_sampling_off(tmp_path):
+    script = env_runner(tmp_path)
+    out = tmp_path / "out"
+    result = subprocess.run(["bash", str(script), "11"],
+                            env={**os.environ, "OUT": str(out), "RELEASE_CPU": "3", "CPU_SAMPLE": ""},
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    calls = (out / "calls").read_text().splitlines()
+    assert [c.split()[0] for c in calls] == ["p11_S1", "p11_H1", "p11_H2", "p11_S2"]
+    assert all(" cpu=unset sample= " in c for c in calls)
+    assert (out / "p11_S2.bits").read_text().strip() == stream(111, 256, 256)
+
+
+@pytest.mark.parametrize("protocol, arm, seed, n, skip", [
+    ("9", "p9_arrival", 92, 64, 0), ("9", "p9_T2", 91, 256, 256), ("10", "p10_orderfail_cap", 104, 128, 0),
+    ("10", "p10_pending1", 105, 128, 0)])
+def test_registered_seeds_still_parse_after_the_cpu_column(tmp_path, protocol, arm, seed, n, skip):
+    script = env_runner(tmp_path)
+    out = tmp_path / "out"
+    result = subprocess.run(["bash", str(script), protocol], env={**os.environ, "OUT": str(out), "ARMS": arm},
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (out / f"{arm}.bits").read_text().strip() == stream(seed, n, skip)
