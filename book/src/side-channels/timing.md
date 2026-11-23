@@ -100,9 +100,13 @@ With no check running at the release, the timing code wasn't detected at 512 rep
 
 {{#include ../results.md:protocol-9}}
 
+![Reply times by bit: release on arrival shows the server's wait, fixed release doesn't](../figures/timing-p9.svg)
+
 The load test asks what a check running at another reply's release does. The server times each valid answer so that its check either spans the previous request's release or starts just after it. That moved the release on the endpoint's clock, and a client decoded it (protocol 11):
 
 {{#include ../results.md:protocol-11}}
+
+![Release lateness by bit on the endpoint's clock: later when a check is running at the release](../figures/load-p11.svg)
 
 Fixed release stops replies leaving early, but a reply can leave a little late when the endpoint is busy, and the server decides when it's busy. The delay is small; a patient receiver still reads it. Two caveats:
 

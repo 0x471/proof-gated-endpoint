@@ -51,6 +51,10 @@ A registered test on the Pi (protocol 10):
 
 {{#include ../results.md:protocol-10}}
 
+![Two real request pairs with a tight deadline: the server's answer order picks which request runs out of time; with a longer deadline both checks fit](../figures/order-to-failure.svg)
+
+![What happened to every reply in each protocol 10 arm](../figures/protocol10-arms.svg)
+
 So the reply-order invariant held, and the order code on its own wasn't detected. But order fed into failures. What helps, and what it costs:
 
 - **A deadline that fits every waiting check.** The control with a longer deadline gave nothing to read. The general form is a start-up rule: refuse to start unless max_pending x C + A <= D, where C is a time limit per check, A the time allowed for an answer to arrive and D the deadline. An answer that arrives in time then waits behind at most max_pending - 1 checks of at most C each, whatever the server does with the others. This is a design, not a tested defence: the endpoint has no per-check limit yet, and the rule hasn't been tested against a server that withholds, delays or spoils answers. Its cost is fewer questions in flight or a longer deadline.

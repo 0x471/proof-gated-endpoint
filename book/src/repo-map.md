@@ -82,6 +82,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `observer/explore_attacks.py` | Exploratory FlashProve attacks on one Linux machine, each with its control. Not device evidence. |
 | `observer/join_blocks.py`, `observer/protocol10.py` | Join interleaved blocks for `jitter_test.py`; protocol 10's registered analysis. |
 | `observer/trace_lateness.py` | Release lateness by bit from the endpoint's private trace: protocols 9 and 11's secondary analysis. |
+| `observer/figures.py`, `book/src/figures/` | The book's data figures, drawn as plain SVG from the saved protocol 9-11 runs. |
 | `observer/protocol12.py` | Protocol 12's registered analysis: both decoders, the pinned-minus-unpinned lateness interval, the admission path. |
 | `observer/pilot_summary.py` | Summarises a pilot: check and release times from the trace, client-side decodes, simulated sensitivity. |
 | `observer/by_admission.py` | Order multi-client traces by admission. |
