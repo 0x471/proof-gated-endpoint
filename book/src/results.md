@@ -5,18 +5,24 @@
 <!-- ANCHOR: findings -->
 | Signal | Basic endpoint | Best result so far | Cost |
 |---|---|---|---|
-| Changed answer content | Blocked by proof | Blocked | About 0.24 s per check on the Pi |
+| Changed answer content | Blocked by proof | Blocked | About 0.24 s per check on the Pi; 4.98-5.13 s with FlashProve |
 | Reply order | Leaks | Tested ordering code blocked: replies follow question order | A slow reply delays later ones |
 | Reply timing | Leaks | Much reduced. Fixed release prevents early replies; a small trace remained without spin. With spin, a 512-answer test was inconclusive on stock OS and found nothing on the stripped image, one run | 4.0 s per answer instead of about 0.8 s |
 | Chosen failures | Leaks | Cap: 8 of 32 planted bits recovered instead of 32/32. Stopping at the first failure released nothing readable; pre-registered, 2 Nov | Cap: 54 of 128 answers ok instead of 120 during continued failures; an honest server loses none. Stopping answers nothing after the first failure |
+| FlashProve: reply timing | Leaks: arrival release, positive control decoded | Fixed release with no check running at the release: a 1 s timing code not detected at 512 replies, one boot (protocol 9) | Every reply waits the deadline of 10 s |
+| FlashProve: order turned into failures | Not applicable | Leaks with every proof valid: when two answers wait and the deadline fits one check, answer order picks the failing request, 128 of 128 bits (protocol 10). A deadline that fits both checks: nothing decoded. Cap: 54 bits per 256 requests | A longer deadline (12 instead of 7.5 s), or one pending question: 128 of 256 turned away |
+| FlashProve: load near a release | Not applicable | Leaks: a check running at another reply's release delays it by about 0.21 ms on the endpoint's clock, and a client decoded the code (null p 0.0005, protocol 11). No defence tested yet | Not measured |
 <!-- ANCHOR_END: findings -->
 
 > **In short**
 > - Arrival order stopped the ordering code tried. Fixed release reduced timing signals; failures still leaked.
 > - The registered spin test was inconclusive on the stock system and detected nothing on the stripped image, once each.
 > - Failure caps reduced leakage at a large availability cost. Random sleeps kept leaking in a model.
+> - With FlashProve's slower checks (19-21 Nov), a timing code through fixed release wasn't detected. But answer order chose which request failed, with valid proofs only, and a check near a release delayed it enough for a client to read.
 
 Unless stated otherwise, runs used one Raspberry Pi 4 with 2 GB and 64-bit Raspberry Pi OS Lite. An Apple M4 Pro laptop ran the Python EZKL prover and outside observer over direct Ethernet. Dates are 2026.
+
+FlashProve rows use the stock card and FlashProve's stored proof ([FlashProve on the Pi](#flashprove-on-the-pi-19-21-nov)). Their last two leaks appear only with the defences on, so they have no basic-endpoint entry.
 
 A fixed decoder tries to recover planted bits. "16/16" means it recovered every bit. A decoding failure means this decoder missed this message in this run. The achieved rates are not channel-capacity bounds; tests use one sequential client unless stated otherwise.
 
