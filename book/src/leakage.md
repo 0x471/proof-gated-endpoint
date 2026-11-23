@@ -37,8 +37,8 @@ So the server cannot directly choose the reply's encoding or copy its own packet
 
 | Channel | How the server signals | Our defence | Status |
 |---|---|---|---|
-| [Order](side-channels/order.md) | answers open questions in a chosen order | write admitted replies in admission order | server's chosen write order removed; separate connections tested briefly |
-| [Timing](side-channels/timing.md) | answers fast for a 0, slow for a 1 | fixed release targets | simple code stopped; finer tests mixed; no general bound |
+| [Order](side-channels/order.md) | answers open questions in a chosen order | write admitted replies in admission order | server's chosen write order removed; with slow checks, answer order still picks which request runs out of time |
+| [Timing](side-channels/timing.md) | answers fast for a 0, slow for a 1 | fixed release targets | simple code stopped; finer tests mixed; with FlashProve, a check near a release delays it slightly and a client read it; no general bound |
 | [Failures](side-channels/failures.md) | makes chosen answers fail | optional failure cap with forced cooldowns | counted bound on admitted reply statuses, per boot |
 | [Choosing among valid answers](side-channels/answer-choice.md) | picks which of several accepted answers to send | fix or bound output choice | not measured: our toy relation has one output per encoded input |
 | [Size, packets, queue and logs](side-channels/other.md) | varies format, packets, refusals or log events | fixed formats, fresh replies and release rules | direct choices restricted; packet effects unmeasured and logs retain information |

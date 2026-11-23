@@ -4,6 +4,7 @@
 > - The server can make chosen answers fail; which ones fail spells the message.
 > - Release timing alone does not hide which answers fail.
 > - A failure cap limits the channel with a counted bound, at a cost in availability.
+> - With slow checks, the server can also choose failures with valid proofs only, through the order of its answers ([Order](order.md#with-slower-checks-order-turned-into-failures)).
 
 ## How the attack works
 
@@ -76,6 +77,10 @@ A registered test on the Pi compared both:
 Each capped run matched the reference model reply for reply. No answers were lost in the single honest control run. That does not show that honest faults could never trigger a cooldown. Full conditions are in [Measurements](../results.md#failure-cap-versus-stopping-2-nov-protocol-3).
 
 Which to choose is a policy decision. A cap resumes successful service after a cooldown and records a trip in the log; alerts are not built. A halt prevents successful replies until restart. The choice depends on whether losing service or losing a secret is worse.
+
+## Failures from valid answers
+
+The server doesn't need a broken proof to make a chosen request fail. With FlashProve's slower checks and a tight deadline, sending its valid answers in a chosen order makes a chosen request run out of time. The cap counts these failures like any other: it slowed the channel but didn't stop it. The mechanism, the measurements and the defences are in [Order](order.md#with-slower-checks-order-turned-into-failures).
 
 ## Restarts
 
