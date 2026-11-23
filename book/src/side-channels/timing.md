@@ -106,7 +106,7 @@ The load test asks what a check running at another reply's release does. The ser
 
 Fixed release stops replies leaving early, but a reply can leave a little late when the endpoint is busy, and the server decides when it's busy. The delay is small; a patient receiver still reads it. Two caveats:
 
-- The laptop, which runs the server and the observer, wasn't idle during these runs ([disclosure](../results.md#the-laptop-wasnt-idle-during-protocols-9-11-disclosed-after-the-runs)). A further protocol is designed to repeat the load test with an idle laptop, and with the release step on its own CPU.
+- The laptop, which runs the server and the observer, wasn't idle during these runs ([disclosure](../results.md#the-laptop-wasnt-idle-during-protocols-9-11-disclosed-after-the-runs)). Protocol 12, registered in `docs/EXPERIMENT_PROTOCOL_7.md` before any data, repeats the load test with an idle laptop, and with the release step on its own CPU.
 - A second path was found after the runs and is only exploratory: the endpoint stamps admission when its event loop reaches a request, so a busy loop admits late and the release target moves with it ([Measurements](../results.md#load-near-a-release-21-nov-protocol-11)).
 
 ## Why measurements cannot prove timing is safe
