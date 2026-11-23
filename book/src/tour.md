@@ -142,6 +142,18 @@ Halt is optional and off by default (`--halt-after N`). After N server-caused fa
 
 [Review found release bugs](hardening.md#bugs-found-by-review), all fixed with regression tests: late successes after halt or deadline, uncounted held answers, spin reordering and chained busy-waits.
 
+## The FlashProve backend (experimental)
+
+The endpoint can also check proofs from Anthropic's FlashProve, at a pinned commit, for its small synthetic model (`--backend flashprove`). Admission, release order, fixed release and the cap work as above; the proof and the checker change. The full contract is `docs/FLASHPROVE_BINDING.md`.
+
+- **Tokens.** A question is a fixed number of prompt token ids. An answer is the reply token ids plus the proof; a reply carries the ids or a fixed error. These messages have their own kinds, so they never parse as EZKL messages.
+- **The endpoint builds the statement.** It takes the admitted prompt and the server's reply ids and never uses a request file, model id or configuration from the server. The model's commitment, configuration, key files and the verifier binary are pinned by hash.
+- **The checker.** Each check runs FlashProve's unmodified `cp_verify` in a child process with a new process group, an empty environment, lowered limits, a seccomp filter, and Landlock where the kernel has it. The whole group is killed at the deadline.
+- **One check at a time.** Waiting answers are checked in the order they arrive. A FlashProve check takes a large part of the deadline, and that turns answer order into failures ([Order](side-channels/order.md#with-slower-checks-order-turned-into-failures)).
+- **A stored proof.** The experiments replay one genuine stored proof, and every request still runs the verifier. That tests the gate's checks and timing, not fresh proving.
+
+It runs on the Pi's stock card, not on the hardened image. The stock kernel has no Landlock, so the Pi runs use `--confine seccomp-only`, and the endpoint process itself isn't confined. The binding's "What this setup lacks" lists the rest.
+
 ## From v0 to v2
 
 Each version removes ways into the device and is measured the same way. v0 and v1 have Pi measurements; v2 is planned.
