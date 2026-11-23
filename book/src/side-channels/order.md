@@ -4,6 +4,7 @@
 > - With several questions open, the server can choose which to answer first.
 > - For admitted questions, the endpoint writes replies in admission order.
 > - This removes the server's choice of write order; timing and immediate refusals need separate controls.
+> - With FlashProve's slower checks, answer order can still choose which request runs out of time: order turned into failures.
 
 ## How the attack works
 
@@ -39,3 +40,22 @@ Without the defence, the order code got every planted bit through. With arrival 
 - **One queue for everyone** means one slow question delays all users. Ordering per user would avoid that, but the server could then choose the order across users. This trade-off is still open.
 
 The state-machine tests exercise the admission and release rules with different answer orders. They check the endpoint's decisions, not every possible network observation.
+
+## With slower checks: order turned into failures
+
+Admission order controls the order replies leave. It doesn't control the order answers are checked. The endpoint has one checker, and it takes answers in the order they arrive. With the EZKL toy model a check used a small part of the release budget, so every waiting answer was checked in time, whatever the order. A FlashProve check takes a large part of the deadline ([Measurements](../results.md#does-the-endpoint-work-with-a-large-proof-verifier)), and that opens a new channel.
+
+The accomplice sends two questions together. The deadline fits one check, not two. The server sends both valid answers, the one it wants to keep first. The checker starts on it; the other answer waits, its check can't finish before its deadline, and that request gets `unavailable`. Which of the two failed is one bit. Every proof is valid, and the replies still leave in admission order.
+
+A registered test on the Pi (protocol 10):
+
+{{#include ../results.md:protocol-10}}
+
+So the reply-order invariant held, and the order code on its own wasn't detected. But order fed into failures. What helps, and what it costs:
+
+- **A deadline that fits every waiting check.** The control with a longer deadline gave nothing to read. The general form is a start-up rule: refuse to start unless max_pending x C + A <= D, where C is a time limit per check, A the time allowed for an answer to arrive and D the deadline. An answer that arrives in time then waits behind at most max_pending - 1 checks of at most C each, whatever the server does with the others. This is a design, not a tested defence: the endpoint has no per-check limit yet, and the rule hasn't been tested against a server that withholds, delays or spoils answers. Its cost is fewer questions in flight or a longer deadline.
+- **One pending question** (`--max-pending 1`) leaves no choice, but the second of two simultaneous questions is turned away as `busy`.
+- **The failure cap** slows the channel but doesn't stop it, and the receiver can see which pairs it erased.
+- **Checking strictly in admission order doesn't stop it.** The server withholds the oldest answer: that request fails, and the wait also fails the one behind it. It does take away the free lever, since the server must now spoil or delay an answer, and those failures count against the cap.
+
+Neither the order tests nor the failure tests found this on their own. It appeared when the proof system changed: fast checks had hidden it.
