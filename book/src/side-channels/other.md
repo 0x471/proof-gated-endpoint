@@ -25,6 +25,8 @@ The endpoint never forwards the server's packets. It holds two separate connecti
 
 So the server cannot directly choose the headers or packet sizes users see. This removes direct forwarding as a route for those bits, not every possible network channel.
 
+The FLI interlock prototype applies the same rule one layer down, on raw Ethernet: it never forwards the server's header or checksum, forces the addresses, enforces the length field, neutralises padding and builds a fresh frame. It accepts one residual, the length chosen for each frame, worth about a bit per frame, and charges it in its accounting rather than blocking it ([frame sanitization rules](https://github.com/JamesPetrie/interlock/blob/a0481f8822afc4839d1603593c802da8b632823d/docs/ethernet-frame-sanitization.md), [security architecture](https://github.com/JamesPetrie/interlock/blob/a0481f8822afc4839d1603593c802da8b632823d/docs/security-architecture.md#3-timing-isolation-and-metadata-removal)). This endpoint's fixed-size replies leave no such choice in the reply length.
+
 This is an argument, not yet a measurement. The server still decides when it answers, which could in principle change how the endpoint's operating system sends its packets. Packet captures are part of the registered timing tests, but the last runs skipped them. They are planned for the next runs on the Pi.
 
 ## Identifiers, nonces and other protocols
