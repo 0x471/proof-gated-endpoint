@@ -43,7 +43,7 @@ The binary relies on the read-only image, and later on v2 secure boot. The Pytho
 
 The chips and closed boot firmware are trusted; that firmware runs before our code. A backdoored endpoint could release everything. A real deployment needs auditable hardware or endpoints from two vendors in series.
 
-Build machines must be uncompromised. CI builds the binary from pinned sources; a laptop VM builds the image from hash-checked sources and checks it afterwards. Independent builds and v1.1 reproducibility are documented in [Measurements](results.md#attack-surface). Both still trust Buildroot, upstream sources and published hashes; see the [build-machine reference](https://github.com/0x471/fasr-proof-gated-endpoint/blob/main/docs/ATTACK_SURFACE.md#build-machines-the-supply-chain).
+Build machines must be uncompromised. CI builds the binary from pinned sources; a laptop VM builds the image from hash-checked sources and checks it afterwards. Independent builds and v1.1 reproducibility are documented in [Measurements](results.md#attack-surface). Both still trust Buildroot, upstream sources and published hashes; see the [build-machine reference](https://github.com/0x471/proof-gated-endpoint/blob/main/docs/ATTACK_SURFACE.md#build-machines-the-supply-chain).
 
 ## Out of scope
 

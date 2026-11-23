@@ -41,4 +41,4 @@ This work was supported by ERA's Frontier AI Security Residency. It is work in p
 - Evidence and commands: [Measurements](results.md) and [Reproduce](reproduce.md).
 - Scope and unfamiliar terms: [Limitations](limitations.md) and [Glossary](glossary.md).
 
-Code: [proof-gated-endpoint](https://github.com/0x471/fasr-proof-gated-endpoint).
+Code: [proof-gated-endpoint](https://github.com/0x471/proof-gated-endpoint).
