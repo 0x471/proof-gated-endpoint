@@ -4,6 +4,7 @@
 > - The server can answer fast or slow on purpose; reply times then carry bits.
 > - Fixed release sets a public target, but the endpoint can still send late.
 > - A tiny trace remained without "spin"; measurements cannot prove a timing channel is gone.
+> - With FlashProve, a check running when another reply was due delayed that reply slightly, and a client read the delay.
 
 ## How the attack works
 
@@ -90,6 +91,23 @@ A longer three-user test with six times the answers (protocol 6) was also inconc
 {{#include ../results.md:clients-p6}}
 
 Two inconclusive results fit a very small trace with several users, or chance; a larger test or a better design is needed to tell. The run's disturbances are on [Measurements](../results.md#three-clients-with-six-times-the-answers-4-nov-protocol-6).
+
+## With FlashProve: an idle checker and a busy one
+
+Protocols 9 and 11 asked the timing questions again with FlashProve's large proofs, on the Pi's stock card ([setup](../results.md#flashprove-on-the-pi-19-21-nov)).
+
+With no check running at the release, the timing code wasn't detected at 512 replies (protocol 9):
+
+{{#include ../results.md:protocol-9}}
+
+The load test asks what a check running at another reply's release does. The server times each valid answer so that its check either spans the previous request's release or starts just after it. That moved the release on the endpoint's clock, and a client decoded it (protocol 11):
+
+{{#include ../results.md:protocol-11}}
+
+Fixed release stops replies leaving early, but a reply can leave a little late when the endpoint is busy, and the server decides when it's busy. The delay is small; a patient receiver still reads it. Two caveats:
+
+- The laptop, which runs the server and the observer, wasn't idle during these runs ([disclosure](../results.md#the-laptop-wasnt-idle-during-protocols-9-11-disclosed-after-the-runs)). A further protocol is designed to repeat the load test with an idle laptop, and with the release step on its own CPU.
+- A second path was found after the runs and is only exploratory: the endpoint stamps admission when its event loop reaches a request, so a busy loop admits late and the release target moves with it ([Measurements](../results.md#load-near-a-release-21-nov-protocol-11)).
 
 ## Why measurements cannot prove timing is safe
 
