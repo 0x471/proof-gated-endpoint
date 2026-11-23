@@ -9,7 +9,7 @@ Two proof systems share one endpoint. The EZKL track ran on stock Pi OS and on t
 | `endpoint/` | Rust software running on the device: shared event loop, release rules and cap, with an EZKL and a FlashProve backend | Active |
 | `pge/` | Python reference endpoint for EZKL, compared reply for reply; `tokens.py` is FlashProve's message format for the laptop side | Reference |
 | `prover/`, `observer/` | Simulated server, outside client, controls and leakage analysis | Active |
-| `device/` | Pi experiments: the `flashprove_*` scripts and `pi_temp_log.sh` are current; the others ran the EZKL experiments | Active; EZKL scripts frozen |
+| `device/` | Pi experiments: the `flashprove_*` scripts, `pi_temp_log.sh` and `pi_cpu_sample.sh` are current; the others ran the EZKL experiments | Active; EZKL scripts frozen |
 | `image/` | The stripped Buildroot system image (EZKL) | Frozen |
 | `tests/` | Automated checks and pinned models | Active |
 | `docs/`, `book/` | Specifications, registered protocols, evidence and this explanation | Active |
@@ -64,6 +64,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `EXPERIMENT_PROTOCOL_2.md` | Pre-registered protocols 2-5: timing cause, cap/halt, load, clients and packet captures. |
 | `EXPERIMENT_PROTOCOL_3.md`, `_4.md`, `_5.md` | Protocols 6 (several clients), 7 (release loop on its own CPU) and 8 (the frozen image). |
 | `EXPERIMENT_PROTOCOL_6.md` | Protocols 9-11 with FlashProve on the Pi: timing, order and order to failure, load near a release. |
+| `EXPERIMENT_PROTOCOL_7.md` | Protocol 12: the load test again with an idle laptop, with and without a release CPU. |
 | `results/` | Complete registered-experiment analysis. |
 
 </details>
@@ -81,6 +82,7 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `observer/explore_attacks.py` | Exploratory FlashProve attacks on one Linux machine, each with its control. Not device evidence. |
 | `observer/join_blocks.py`, `observer/protocol10.py` | Join interleaved blocks for `jitter_test.py`; protocol 10's registered analysis. |
 | `observer/trace_lateness.py` | Release lateness by bit from the endpoint's private trace: protocols 9 and 11's secondary analysis. |
+| `observer/protocol12.py` | Protocol 12's registered analysis: both decoders, the pinned-minus-unpinned lateness interval, the admission path. |
 | `observer/pilot_summary.py` | Summarises a pilot: check and release times from the trace, client-side decodes, simulated sensitivity. |
 | `observer/by_admission.py` | Order multi-client traces by admission. |
 | `observer/pcap_trace.py` | Extract outside packet details and reply times. |
@@ -102,10 +104,11 @@ Side experiments that are no longer used (a Rust EZKL checker and an S-two check
 | `device/flashprove_contract.sh` | What `cp_verify` does with the stored proof and changed copies on this machine. |
 | `device/flashprove_scenario.sh` | One FlashProve scenario: endpoint on the Pi, replay server and observer on the laptop; manifest with hashes, CPU settings and temperature. |
 | `device/flashprove_gate.sh` | The FlashProve integration gate on the Pi. Not a measurement. |
-| `device/flashprove_protocols.sh` | Runs protocols 9-11 in their registered order, with bits from registered seeds. |
+| `device/flashprove_protocols.sh` | Runs protocols 9-12 in their registered order, with bits from registered seeds. |
 | `device/flashprove_pilot.sh` | The labelled pilot on the Pi that sets deadline, slot, pacing and sample size. Not a result. |
 | `device/flashprove_small.pins` | Pins for FlashProve's stored small proof. |
 | `device/pi_temp_log.sh` | Logs the Pi's temperature at a fixed interval during a scenario. |
+| `device/pi_cpu_sample.sh` | With `CPU_SAMPLE=1`, logs once a minute which CPUs `cp_verify` and the endpoint's threads may use. |
 | `device/verify_on_pi.sh`, `device/check_verifier.sh` | Copy pinned model; time real-tool acceptance and rejection checks. |
 | `device/pi_scenario.sh` | Stock-system EZKL experiment: Python or Rust on Pi; server and observer on laptop. |
 | `device/image_scenario.sh` | Run against the already-started, login-free image endpoint; record manifest. |
