@@ -82,6 +82,10 @@ Which to choose is a policy decision. A cap resumes successful service after a c
 
 The server doesn't need a broken proof to make a chosen request fail. With FlashProve's slower checks and a tight deadline, sending its valid answers in a chosen order makes a chosen request run out of time. The cap counts these failures like any other: it slowed the channel but didn't stop it. The mechanism, the measurements and the defences are in [Order](order.md#with-slower-checks-order-turned-into-failures).
 
+## How a logging device treats failures
+
+The FLI interlock prototype drops invalid packets silently, with no drop counters or status frames, so a dropped packet never leaves the node; an empty response slot is visible and charged instead ([security architecture](https://github.com/JamesPetrie/interlock/blob/a0481f8822afc4839d1603593c802da8b632823d/docs/security-architecture.md#3-timing-isolation-and-metadata-removal); [technical report](https://github.com/JamesPetrie/interlock/blob/a0481f8822afc4839d1603593c802da8b632823d/report/interlock-technical-report.md#74-what-a-challenged-slot-pays), §7.4). That suits a device that records and certifies traffic. A gate that answers every admitted question has to send something, so this endpoint sends one uniform `unavailable` at the release time: the failure shows, its cause and its timing don't.
+
 ## Restarts
 
 The cap's count lives in memory, so any restart starts a fresh window. Nothing automatically restarts a stopped endpoint, and no server-triggered crash path is known. That is not proof that such a path cannot exist.
