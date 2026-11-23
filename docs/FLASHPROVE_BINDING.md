@@ -5,7 +5,7 @@ binding in `BINDING_SPEC.md` is unchanged and remains the binding of the hardene
 here refers to FlashProve at commit 9e2bdd8ff5bf9c62f18263d7dac189b0400b260c: the request format, and
 the closing lines in `verifier/docs/output.md`. A later FlashProve revision needs this page re-checked.
 
-Status: built and tested on a Linux VM; the verifier alone checked on the Pi 4, the endpoint not yet. `endpoint/flashprove` builds the
+Status: built and tested on a Linux VM, and on the Pi 4's stock card: the verifier alone and the endpoint's integration gate (19-21 Nov), then protocols 9-11 (`book/src/results.md`, "FlashProve on the Pi"). `endpoint/flashprove` builds the
 statement, reads the answer and parses the pins file; `endpoint/endpoint/src/fp.rs` holds the bundle copy,
 the job files and the launcher; the service runs it with `--backend flashprove`. The tests are listed
 under [Checks](#checks).

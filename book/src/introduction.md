@@ -3,7 +3,7 @@
 > **In short**
 > - A Raspberry Pi checks proofs before letting an AI server's answers reach a user.
 > - Proofs fix answer content. Timing, order and failures can still carry hidden data.
-> - We measured these signals on a toy model. This is work in progress, not production security.
+> - We measured these signals on a toy model and on FlashProve's small stored proof. This is work in progress, not production security.
 
 ## The problem
 
